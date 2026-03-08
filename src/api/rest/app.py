@@ -1,0 +1,53 @@
+
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from src.api.middleware.cors import setup_cors
+from fastapi.openapi.utils import get_openapi
+
+from src.api.middleware.error_handler import register_exception_handlers
+from src.api.rest.routes.health import router as health_router
+from src.api.rest.routes.tickets import router as ticket_router
+from src.api.rest.routes.keyword_rules import router as keyword_rules_router
+from src.api.rest.routes.sla_rules import router as sla_rules_router
+from src.api.rest.routes.analytics import router as analytics_router
+from src.api.rest.routes.area_of_concern import router as area_of_concern_router
+from src.data.clients.postgres_client import engine
+from src.data.models.postgres import Base
+from src.observability.logging.logger import setup_logging
+from src.api.middleware.jwt_middleware import JWTMiddleware
+import src.data.models.postgres
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    await engine.dispose()
+
+
+def create_app() -> FastAPI:
+    setup_logging()
+    app = FastAPI(
+        title="Ticketing Genie — Ticketing Service",
+        version="1.0.0",
+        description=(
+            "## Authentication\n"
+            "1. Login via **Auth Service** `POST /api/v1/auth/login` to get a token.\n"
+            "2. Click **Authorize** here and paste: `Bearer <token>`"
+        ),
+        lifespan=lifespan,
+    )
+    setup_cors(app)
+    app.add_middleware(JWTMiddleware)
+    register_exception_handlers(app)
+    app.include_router(health_router)
+    app.include_router(ticket_router)
+    app.include_router(keyword_rules_router)
+    app.include_router(sla_rules_router)
+    app.include_router(analytics_router)
+    app.include_router(area_of_concern_router)
+    return app
