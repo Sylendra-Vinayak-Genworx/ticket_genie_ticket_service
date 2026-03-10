@@ -60,6 +60,14 @@ async def _score_assign_ticket(ticket_id: int) -> bool:
         )
 
         if result.assigned_to:
+            # assign_ticket() sets assignee_id + transitions to OPEN but never
+            # writes routing_status or assigned_agent_id. Stamp them now.
+            refreshed = await ticket_repo.get_by_id(ticket_id, eager=False)
+            if refreshed:
+                refreshed.routing_status = RoutingStatus.SUCCESS.value
+                refreshed.queue_type = QueueType.DIRECT.value
+                session.add(refreshed)
+            await session.commit()
             logger.info(
                 "[ticket=%s] Score-based routing SUCCESS → agent=%s "
                 "(strategy=%s, score=%s)",
@@ -147,7 +155,6 @@ async def _fallback_to_lead(ticket_id: int) -> None:
 
         if lead_id:
             ticket.assignee_id = lead_id
-            ticket.assigned_agent_id = None
             ticket.queue_type = QueueType.DIRECT.value
 
             await event_repo.add(
@@ -170,7 +177,6 @@ async def _fallback_to_lead(ticket_id: int) -> None:
 
         else:
             ticket.assignee_id = None
-            ticket.assigned_agent_id = None
             ticket.queue_type = QueueType.OPEN.value
 
             await event_repo.add(
@@ -194,10 +200,6 @@ async def _fallback_to_lead(ticket_id: int) -> None:
         await session.commit()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Step 3 — Beat timeout: move to OPEN queue if lead didn't re-assign
-# ─────────────────────────────────────────────────────────────────────────────
-
 async def _move_to_open_queue(ticket_id: int) -> None:
     """Move a fallback-assigned ticket to the OPEN queue after the timeout."""
     async with AsyncSessionFactory() as session:
@@ -213,7 +215,6 @@ async def _move_to_open_queue(ticket_id: int) -> None:
         old_assignee = ticket.assignee_id
 
         ticket.assignee_id = None
-        ticket.assigned_agent_id = None
         ticket.queue_type = QueueType.OPEN.value
         ticket.status = TicketStatus.OPEN
 

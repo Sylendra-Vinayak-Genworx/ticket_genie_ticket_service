@@ -1,21 +1,4 @@
-"""
-AutoAssignmentService
-~~~~~~~~~~~~~~~~~~~~~
-Implements the scored assignment algorithm:
 
-    score = experience / (1 + workload)
-
-Steps
------
-1. Pull area-experienced agents with their current workload from the DB.
-2. Score each agent and pick the highest scorer.
-3. Fallback to least-loaded agent if no one has area experience.
-4. If still no agent found, return unassigned.
-
-Assignment is persisted via TicketService.assign_ticket so the full
-workflow runs: assignee saved + TicketEvent logged + notifications queued
-+ status transitioned to OPEN.
-"""
 from __future__ import annotations
 
 import logging

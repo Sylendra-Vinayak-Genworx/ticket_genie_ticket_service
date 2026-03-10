@@ -3,16 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 from src.celery_app import celery_app
 from src.config.settings import get_settings
-from src.constants.enum import (
-    EventType, NotificationChannel, NotificationStatus, TicketStatus,
-)
+from src.constants.enum import EventType, TicketStatus
+from src.core.services.notification.manager import notification_manager
+from src.schemas.notification_schema import  AutoClosedRequest
 from src.core.services.sla_service import SLAService
 from src.core.services.ticket_service import TicketService
 from src.data.clients.auth_client import auth_client
 from src.data.clients.postgres_client import AsyncSessionFactory
-from src.data.models.postgres.notification_log import NotificationLog
 from src.data.models.postgres.ticket_event import TicketEvent
-from src.data.repositories.notification_log_repository import NotificationLogRepository
 from src.data.repositories.sla_repository import SLARepository
 from src.data.repositories.sla_rule_repository import SLARuleRepository
 from src.data.repositories.ticket_event_repository import TicketEventRepository
@@ -60,7 +58,6 @@ async def _detect_sla_breaches_async() -> None:
     async with AsyncSessionFactory() as db:
         repo = TicketRepository(db)
         event_repo = TicketEventRepository(db)
-        notification_repo = NotificationLogRepository(db)
         sla_svc = SLAService(SLARepository(db), SLARuleRepository(db))
         ticket_svc = TicketService(db, auth_client)
 
@@ -147,7 +144,6 @@ async def _auto_close_async() -> None:
     async with AsyncSessionFactory() as db:
         repo = TicketRepository(db)
         event_repo = TicketEventRepository(db)
-        notification_repo = NotificationLogRepository(db)
 
         tickets = await repo.get_auto_closeable(cutoff)
         if not tickets:
@@ -172,13 +168,16 @@ async def _auto_close_async() -> None:
                     reason="Auto-closed after 72h in RESOLVED",
                 ))
 
-                await notification_repo.add(NotificationLog(
-                    ticket_id=ticket.ticket_id,
-                    recipient_user_id=ticket.customer_id,
-                    channel=NotificationChannel.EMAIL,
-                    event_type=EventType.AUTO_CLOSED.value,
-                    status=NotificationStatus.PENDING,
-                ))
+                await notification_manager.send(
+                    request=AutoClosedRequest(
+                        ticket_id=ticket.ticket_id,
+                        ticket_number=ticket.ticket_number,
+                        ticket_title=ticket.title,
+                        customer_id=ticket.customer_id,
+                    ),
+                    db=db,
+                    auth_client=auth_client,
+                )
 
                 await db.commit()
                 logger.info(

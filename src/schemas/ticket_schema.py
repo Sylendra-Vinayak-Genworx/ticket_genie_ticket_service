@@ -2,10 +2,10 @@
 Pydantic v2 schemas for the Ticket pipeline.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from src.constants.enum import (
     Environment,
@@ -126,12 +126,34 @@ class TicketBriefResponse(BaseModel):
     routing_status: str = RoutingStatus.SUCCESS.value
     sla_id: Optional[int] = None
     customer_tier_id: Optional[int] = None
-    response_due_at: Optional[datetime] = None
-    resolution_due_at: Optional[datetime] = None
     is_breached: bool = False
     is_escalated: bool = False
     created_at: datetime
     updated_at: datetime
+
+    # Raw SLA fields needed to compute due timestamps
+    response_sla_started_at: Optional[datetime] = None
+    response_sla_deadline_minutes: Optional[int] = None
+    response_sla_completed_at: Optional[datetime] = None
+    resolution_sla_started_at: Optional[datetime] = None
+    resolution_sla_deadline_minutes: Optional[int] = None
+    resolution_sla_total_pause_duration: int = 0
+    resolution_sla_completed_at: Optional[datetime] = None
+
+    @computed_field
+    @property
+    def response_due_at(self) -> Optional[datetime]:
+        if self.response_sla_started_at and self.response_sla_deadline_minutes:
+            return self.response_sla_started_at + timedelta(minutes=self.response_sla_deadline_minutes)
+        return None
+
+    @computed_field
+    @property
+    def resolution_due_at(self) -> Optional[datetime]:
+        if self.resolution_sla_started_at and self.resolution_sla_deadline_minutes:
+            effective = self.resolution_sla_deadline_minutes + (self.resolution_sla_total_pause_duration or 0)
+            return self.resolution_sla_started_at + timedelta(minutes=effective)
+        return None
 
 
 # ── Detail response (single ticket) ──────────────────────────────────────────
@@ -156,8 +178,6 @@ class TicketDetailResponse(BaseModel):
     routing_status: str = RoutingStatus.SUCCESS.value
     sla_id: Optional[int] = None
     customer_tier_id: Optional[int] = None
-    response_due_at: Optional[datetime] = None
-    resolution_due_at: Optional[datetime] = None
     is_breached: bool = False
     is_escalated: bool = False
     hold_started_at: Optional[datetime] = None
@@ -166,6 +186,30 @@ class TicketDetailResponse(BaseModel):
     closed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+    # Raw SLA fields needed to compute due timestamps
+    response_sla_started_at: Optional[datetime] = None
+    response_sla_deadline_minutes: Optional[int] = None
+    response_sla_completed_at: Optional[datetime] = None
+    resolution_sla_started_at: Optional[datetime] = None
+    resolution_sla_deadline_minutes: Optional[int] = None
+    resolution_sla_total_pause_duration: int = 0
+    resolution_sla_completed_at: Optional[datetime] = None
+
+    @computed_field
+    @property
+    def response_due_at(self) -> Optional[datetime]:
+        if self.response_sla_started_at and self.response_sla_deadline_minutes:
+            return self.response_sla_started_at + timedelta(minutes=self.response_sla_deadline_minutes)
+        return None
+
+    @computed_field
+    @property
+    def resolution_due_at(self) -> Optional[datetime]:
+        if self.resolution_sla_started_at and self.resolution_sla_deadline_minutes:
+            effective = self.resolution_sla_deadline_minutes + (self.resolution_sla_total_pause_duration or 0)
+            return self.resolution_sla_started_at + timedelta(minutes=effective)
+        return None
 
     # Eagerly loaded relations
     events: list[TicketEventResponse] = Field(default_factory=list)

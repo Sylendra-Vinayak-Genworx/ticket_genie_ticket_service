@@ -29,7 +29,7 @@ class UserDTO(BaseModel):
     customer_tier_id: Optional[int] = None   
     lead_id: Optional[str] = None
     team_id: Optional[str] = None   # ← missing
-
+    
     class config:
         json_encoders={
             UUID : str

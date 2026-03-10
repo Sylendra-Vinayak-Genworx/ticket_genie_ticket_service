@@ -1,4 +1,3 @@
-
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -165,8 +164,9 @@ async def update_ticket_status(
     return TicketBriefResponse.model_validate(ticket)
 
 
-@router.post( 
+@router.post(
     "/{ticket_id}/comments",
+    response_model=CommentResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Add a comment to a ticket",
     description=(
@@ -183,12 +183,12 @@ async def add_comment(
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
 ):
-    ticket = await svc.add_comment(
+    comment = await svc.add_comment(
         payload,
         current_user_id=user_id,
         current_user_role=user_role,
     )
-    return ticket
+    return CommentResponse.model_validate(comment)
 
 
 @router.post(
@@ -209,4 +209,3 @@ async def assign_ticket(
         current_user_role=user_role,
     )
     return TicketBriefResponse.model_validate(ticket)
-

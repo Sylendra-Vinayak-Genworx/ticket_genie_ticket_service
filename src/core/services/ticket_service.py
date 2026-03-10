@@ -1,13 +1,3 @@
-"""
-Ticket Service — enterprise workflow.
-
-Lifecycle:
-  NEW (auto) → ACKNOWLEDGED (auto) → OPEN → IN_PROGRESS → ON_HOLD ↔ IN_PROGRESS
-  IN_PROGRESS → RESOLVED → CLOSED → OPEN (reopen)
-
-Response SLA : NEW → ACKNOWLEDGED → OPEN → stops at IN_PROGRESS
-Resolution SLA: starts IN_PROGRESS, pauses ON_HOLD, stops RESOLVED, restarts on reopen
-"""
 
 import logging
 from datetime import datetime, timezone
@@ -16,11 +6,20 @@ from src.schemas.ticket_schema import CommentCreateRequest
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.settings import get_settings
 from src.constants.enum import (
-    EventType, NotificationChannel, NotificationStatus,
-    Priority, Severity, TicketStatus, UserRole,
+    EventType, Priority, Severity, TicketSource, TicketStatus, UserRole,
 )
+from src.schemas.notification_schema import (
+    
+    AgentCommentRequest,
+    AutoClosedRequest,
+    CustomerCommentRequest,
+    SLABreachedRequest,
+    StatusChangedRequest,
+    TicketAssignedRequest,
+    TicketCreatedRequest,
+)
+from src.core.services.notification.manager import notification_manager
 from src.core.exceptions.base import (
     InsufficientPermissionsError,
     InvalidStatusTransitionError,
@@ -29,13 +28,10 @@ from src.core.exceptions.base import (
 from src.core.services.classification_service import ClassificationService
 from src.core.services.sla_service import SLAService
 from src.data.clients.auth_client import AuthServiceClient, UserDTO
-from src.data.models.postgres.notification_log import NotificationLog
 from src.data.models.postgres.ticket import Ticket
 from src.data.models.postgres.ticket_attachment import TicketAttachment
 from src.data.models.postgres.ticket_event import TicketEvent
-from src.data.repositories.agent_repository import AgentRepository
 from src.data.repositories.keyword_repository import KeywordRepository
-from src.data.repositories.notification_log_repository import NotificationLogRepository
 from src.data.repositories.sla_repository import SLARepository
 from src.data.repositories.sla_rule_repository import SLARuleRepository
 from src.data.repositories.ticket_attachment_repository import TicketAttachmentRepository
@@ -71,7 +67,6 @@ class TicketService:
         self._ticket_repo = TicketRepository(db)
         self._event_repo = TicketEventRepository(db)
         self._attachment_repo = TicketAttachmentRepository(db)
-        self._notification_repo = NotificationLogRepository(db)
         self._sla_repo = SLARepository(db)
         self._sla_rule_repo = SLARuleRepository(db)
         self._keyword_repo = KeywordRepository(db)
@@ -125,7 +120,6 @@ class TicketService:
           6. Send acknowledgement notification
         """
         now = datetime.now(timezone.utc)
-        settings = get_settings()
 
         # 1. Fetch user (for tier lookup)
         customer: UserDTO = await self._auth.get_user(current_user_id)
@@ -193,13 +187,16 @@ class TicketService:
             reason="Automatic acknowledgement on creation",
         )
 
-        await self._notification_repo.add(NotificationLog(
-            ticket_id=ticket.ticket_id,
-            recipient_user_id=current_user_id,
-            channel=NotificationChannel.EMAIL,
-            event_type=EventType.CREATED.value,
-            status=NotificationStatus.PENDING,
-        ))
+        await notification_manager.send(
+            request=TicketCreatedRequest(
+                ticket_id=ticket.ticket_id,
+                ticket_number=ticket.ticket_number,
+                ticket_title=ticket.title,
+                customer_id=current_user_id,
+            ),
+            db=self.db,
+            auth_client=self._auth,
+        )
 
         logger.info(
             "ticket_created: number=%s severity=%s priority=%s user=%s",
@@ -268,13 +265,28 @@ class TicketService:
             TicketStatus.IN_PROGRESS, TicketStatus.RESOLVED,
             TicketStatus.CLOSED, TicketStatus.OPEN,
         ):
-            await self._notification_repo.add(NotificationLog(
-                ticket_id=ticket.ticket_id,
-                recipient_user_id=ticket.customer_id,
-                channel=NotificationChannel.EMAIL,
-                event_type=EventType.STATUS_CHANGED.value,
-                status=NotificationStatus.PENDING,
-            ))
+            agent_name: str | None = None
+            if current_user_id != SYSTEM:
+                try:
+                    agent = await self._auth.get_user(current_user_id)
+                    agent_name = agent.email.split("@")[0]
+                except Exception:
+                    pass
+
+            await notification_manager.send(
+                request=StatusChangedRequest(
+                    ticket_id=ticket.ticket_id,
+                    ticket_number=ticket.ticket_number,
+                    ticket_title=ticket.title,
+                    old_status=old_status.value,
+                    new_status=new_status.value,
+                    severity=ticket.severity.value,
+                    customer_id=ticket.customer_id,
+                    agent_name=agent_name,
+                ),
+                db=self.db,
+                auth_client=self._auth,
+            )
 
         logger.info(
             "status_changed: id=%s %s→%s by=%s",
@@ -318,14 +330,25 @@ class TicketService:
             current_user_role=current_user_role
         )
             
-        for channel in (NotificationChannel.EMAIL, NotificationChannel.IN_APP):
-            await self._notification_repo.add(NotificationLog(
+        try:
+            customer = await self._auth.get_user(ticket.customer_id)
+            customer_name = customer.email.split("@")[0]
+        except Exception:
+            customer_name = "Customer"
+
+        await notification_manager.send(
+            request=TicketAssignedRequest(
                 ticket_id=ticket.ticket_id,
-                recipient_user_id=payload.assignee_id,
-                channel=channel,
-                event_type=EventType.ASSIGNED.value,
-                status=NotificationStatus.PENDING,
-            ))
+                ticket_number=ticket.ticket_number,
+                ticket_title=ticket.title,
+                severity=ticket.severity.value,
+                status=ticket.status.value,
+                customer_name=customer_name,
+                assignee_id=payload.assignee_id,
+            ),
+            db=self.db,
+            auth_client=self._auth,
+        )
 
         logger.info("assigned: id=%s → %s by %s", ticket_id, payload.assignee_id, current_user_id)
         return ticket
@@ -426,15 +449,6 @@ class TicketService:
                 reason=f"Escalated to lead after SLA breach (level {ticket.escalation_level})",
             ))
 
-            for channel in (NotificationChannel.EMAIL, NotificationChannel.IN_APP):
-                await self._notification_repo.add(NotificationLog(
-                    ticket_id=ticket.ticket_id,
-                    recipient_user_id=lead_id,
-                    channel=channel,
-                    event_type=EventType.ESCALATED.value,
-                    status=NotificationStatus.PENDING,
-                ))
-
             logger.info(
                 "escalated: ticket_id=%s level=%s → lead=%s (assignee's lead)",
                 ticket.ticket_id, ticket.escalation_level, lead_id,
@@ -442,20 +456,33 @@ class TicketService:
 
         else:
             # Level 2+ — ticket is already with the lead, notify again
-            for channel in (NotificationChannel.EMAIL, NotificationChannel.IN_APP):
-                await self._notification_repo.add(NotificationLog(
-                    ticket_id=ticket.ticket_id,
-                    recipient_user_id=lead_id,
-                    channel=channel,
-                    event_type=EventType.ESCALATED.value,
-                    status=NotificationStatus.PENDING,
-                ))
-
             logger.warning(
                 "escalated: ticket_id=%s level=%s — lead=%s re-notified, "
                 "manual intervention required",
                 ticket.ticket_id, ticket.escalation_level, lead_id,
             )
+
+        # Notify the lead — always both email + SSE (operational alert)
+        try:
+            customer = await self._auth.get_user(ticket.customer_id)
+            customer_name = customer.email.split("@")[0]
+        except Exception:
+            customer_name = "Customer"
+
+        await notification_manager.send(
+            request=SLABreachedRequest(
+                ticket_id=ticket.ticket_id,
+                ticket_number=ticket.ticket_number,
+                ticket_title=ticket.title,
+                severity=ticket.severity.value,
+                status=ticket.status.value,
+                customer_name=customer_name,
+                breach_type=reason,
+                lead_id=lead_id,
+            ),
+            db=self.db,
+            auth_client=self._auth,
+        )
 
         return ticket
 
@@ -473,18 +500,64 @@ class TicketService:
         self,
         comment: CommentCreateRequest,
         current_user_id: str,
-        current_user_role: str
-        
+        current_user_role: str,
     ):
-        return await self._comment_repo.add(
-            TicketComment(
+        saved = await self._comment_repo.add(TicketComment(
             ticket_id=comment.ticket_id,
             author_id=current_user_id,
             author_role=current_user_role,
             body=comment.body,
             is_internal=comment.is_internal,
             triggers_hold=comment.triggers_hold,
-            triggers_resume=comment.triggers_resume
-        )
-        )
-    
+            triggers_resume=comment.triggers_resume,
+        ))
+
+        # Internal notes never trigger notifications
+        if comment.is_internal:
+            return saved
+
+        ticket = await self._ticket_repo.get_by_id(comment.ticket_id, eager=False)
+        if not ticket:
+            return saved
+
+        role = UserRole(current_user_role)
+
+        if role == UserRole.CUSTOMER and ticket.assignee_id:
+            # Customer replied → notify assigned agent
+            await notification_manager.send(
+                request=CustomerCommentRequest(
+                    ticket_id=ticket.ticket_id,
+                    ticket_number=ticket.ticket_number,
+                    ticket_title=ticket.title,
+                    customer_name=current_user_id,
+                    comment_body=comment.body,
+                    assignee_id=ticket.assignee_id,
+                ),
+                db=self.db,
+                auth_client=self._auth,
+            )
+
+        elif role in (UserRole.AGENT, UserRole.LEAD) and ticket.source == TicketSource.EMAIL:
+            # Agent public comment on an EMAIL ticket → AI-drafted reply to customer
+            try:
+                commenter = await self._auth.get_user(current_user_id)
+                agent_name = commenter.email.split("@")[0]
+            except Exception:
+                agent_name = "Support Agent"
+
+            await notification_manager.send(
+                request=AgentCommentRequest(
+                    ticket_id=ticket.ticket_id,
+                    ticket_number=ticket.ticket_number,
+                    ticket_title=ticket.title,
+                    status=ticket.status.value,
+                    severity=ticket.severity.value,
+                    customer_id=ticket.customer_id,
+                    agent_name=agent_name,
+                    comment_body=comment.body,
+                ),
+                db=self.db,
+                auth_client=self._auth,
+            )
+
+        return saved

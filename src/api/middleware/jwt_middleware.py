@@ -4,11 +4,13 @@ JWT Middleware — decodes the Bearer token and injects:
     request.state.user_role (str)
 
 Public paths bypass auth entirely.
+Token is read from the Authorization header first, then from the
+?token= query parameter as a fallback (required for EventSource / SSE,
+which cannot send custom headers in the browser).
 """
 
 import logging
 from typing import Callable
-
 
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError
@@ -40,13 +42,18 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         if request.method == "OPTIONS":
             return await call_next(request)
-        # Skip auth for public paths
+
         if _is_public(request.url.path):
             return await call_next(request)
 
-        auth_header: str = request.headers.get("Authorization", "")
+        # Primary: Authorization header
+        # Fallback: ?token= query param — required for EventSource (SSE) which
+        # cannot send custom headers in the browser.
+        token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        if not token:
+            token = request.query_params.get("token", "").strip()
 
-        if not auth_header:
+        if not token:
             return JSONResponse(
                 status_code=401,
                 content={
@@ -54,17 +61,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     "error_type": "MissingAuthHeader",
                 },
             )
-
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "detail": "Authorization header must start with 'Bearer '.",
-                    "error_type": "InvalidAuthHeader",
-                },
-            )
-
-        token = auth_header[len("Bearer "):]
 
         try:
             payload = jwt.decode(
@@ -90,7 +86,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Validate required claims
         user_id = payload.get("sub")
         user_role = payload.get("role")
 
@@ -103,7 +98,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        request.state.user_id = user_id         
+        request.state.user_id = user_id
         request.state.user_role = str(user_role)
 
         logger.debug(
