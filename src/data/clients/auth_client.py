@@ -1,8 +1,3 @@
-"""
-HTTP client for Auth Service.
-All cross-service user lookups go through here.
-"""
-
 import asyncio
 import logging
 from typing import Optional
@@ -26,9 +21,10 @@ class UserDTO(BaseModel):
     role: str                           
     is_active: bool = True
     is_verified: bool = False
-    customer_tier_id: Optional[int] = None   
+    preferred_mode_of_contact: str = "email"   
+    customer_tier_id: Optional[int] = None
     lead_id: Optional[str] = None
-    team_id: Optional[str] = None   # ← missing
+    team_id: Optional[str] = None
     
     class config:
         json_encoders={

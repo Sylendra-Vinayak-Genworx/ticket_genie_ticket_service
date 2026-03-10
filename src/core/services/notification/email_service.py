@@ -217,7 +217,8 @@ class EmailNotificationService:
 
         try:
             if self._user:
-                await asyncio.get_event_loop().run_in_executor(
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
                     None,
                     partial(
                         self._smtp_send,

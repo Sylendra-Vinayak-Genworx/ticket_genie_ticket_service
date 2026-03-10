@@ -1,13 +1,3 @@
-"""
-api/rest/routes/notifications.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-SSE streaming endpoint for UI notifications.
-
-ADD to src/api/rest/app.py:
-    from src.api.rest.routes.notifications import router as notifications_router
-    app.include_router(notifications_router)
-"""
-
 import asyncio
 from typing import AsyncGenerator
 
@@ -35,11 +25,12 @@ async def notification_stream(user_id: CurrentUserID) -> StreamingResponse:
         try:
             while True:
                 try:
+                   
                     event = await asyncio.wait_for(queue.get(), timeout=30.0)
                     yield f"data: {event}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"   # keep-alive every 30s
-        except asyncio.CancelledError:
+                    yield ": ping\n\n"  
+        except (asyncio.CancelledError, GeneratorExit):
             pass
         finally:
             sse_bus.unsubscribe(user_id, queue)
@@ -49,7 +40,7 @@ async def notification_stream(user_id: CurrentUserID) -> StreamingResponse:
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # disable nginx buffering
+            "X-Accel-Buffering": "no",  
             "Connection": "keep-alive",
         },
     )

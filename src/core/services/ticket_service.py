@@ -1,4 +1,4 @@
-
+import asyncio
 import logging
 from datetime import datetime, timezone
 from src.data.models.postgres.ticket_comment import TicketComment
@@ -44,6 +44,7 @@ from src.schemas.ticket_schema import (
     TicketStatusUpdateRequest,
 )
 from src.data.repositories.ticket_comment_repository import TicketCommentRepository
+from src.data.clients.postgres_client import AsyncSessionLocal
 logger = logging.getLogger(__name__)
 
 # ── Strict transition matrix ──────────────────────────────────────────────────
@@ -58,6 +59,30 @@ ALLOWED_TRANSITIONS: dict[TicketStatus, list[TicketStatus]] = {
 }
 
 SYSTEM = "SYSTEM"
+
+
+def _fire_notification(request, auth_client: "AuthServiceClient") -> None:
+    """
+    Schedule a notification as a fire-and-forget asyncio Task.
+    """
+    async def _run():
+        async with AsyncSessionLocal() as db:
+            try:
+                await notification_manager.send(
+                    request=request,
+                    db=db,
+                    auth_client=auth_client,
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                import logging as _log
+                _log.getLogger(__name__).exception(
+                    "_fire_notification: task failed for type=%s", request.type
+                )
+
+    asyncio.create_task(_run())
+
 
 
 class TicketService:
@@ -187,14 +212,13 @@ class TicketService:
             reason="Automatic acknowledgement on creation",
         )
 
-        await notification_manager.send(
+        _fire_notification(
             request=TicketCreatedRequest(
                 ticket_id=ticket.ticket_id,
                 ticket_number=ticket.ticket_number,
                 ticket_title=ticket.title,
                 customer_id=current_user_id,
             ),
-            db=self.db,
             auth_client=self._auth,
         )
 
@@ -273,7 +297,7 @@ class TicketService:
                 except Exception:
                     pass
 
-            await notification_manager.send(
+            _fire_notification(
                 request=StatusChangedRequest(
                     ticket_id=ticket.ticket_id,
                     ticket_number=ticket.ticket_number,
@@ -284,7 +308,6 @@ class TicketService:
                     customer_id=ticket.customer_id,
                     agent_name=agent_name,
                 ),
-                db=self.db,
                 auth_client=self._auth,
             )
 
@@ -336,7 +359,7 @@ class TicketService:
         except Exception:
             customer_name = "Customer"
 
-        await notification_manager.send(
+        _fire_notification(
             request=TicketAssignedRequest(
                 ticket_id=ticket.ticket_id,
                 ticket_number=ticket.ticket_number,
@@ -346,7 +369,6 @@ class TicketService:
                 customer_name=customer_name,
                 assignee_id=payload.assignee_id,
             ),
-            db=self.db,
             auth_client=self._auth,
         )
 
@@ -469,7 +491,7 @@ class TicketService:
         except Exception:
             customer_name = "Customer"
 
-        await notification_manager.send(
+        _fire_notification(
             request=SLABreachedRequest(
                 ticket_id=ticket.ticket_id,
                 ticket_number=ticket.ticket_number,
@@ -480,7 +502,6 @@ class TicketService:
                 breach_type=reason,
                 lead_id=lead_id,
             ),
-            db=self.db,
             auth_client=self._auth,
         )
 
@@ -524,40 +545,62 @@ class TicketService:
 
         if role == UserRole.CUSTOMER and ticket.assignee_id:
             # Customer replied → notify assigned agent
-            await notification_manager.send(
+            # Resolve the customer's real name instead of passing the raw UUID
+            try:
+                customer_user = await self._auth.get_user(current_user_id)
+                customer_name = customer_user.email.split("@")[0]
+            except Exception:
+                customer_name = "Customer"
+
+            _fire_notification(
                 request=CustomerCommentRequest(
                     ticket_id=ticket.ticket_id,
                     ticket_number=ticket.ticket_number,
                     ticket_title=ticket.title,
-                    customer_name=current_user_id,
+                    customer_name=customer_name,
                     comment_body=comment.body,
                     assignee_id=ticket.assignee_id,
                 ),
-                db=self.db,
                 auth_client=self._auth,
             )
 
-        elif role in (UserRole.AGENT, UserRole.LEAD) and ticket.source == TicketSource.EMAIL:
-            # Agent public comment on an EMAIL ticket → AI-drafted reply to customer
+        elif role in (UserRole.AGENT, UserRole.LEAD, UserRole.ADMIN):
+            # Agent/lead/admin public comment → notify customer via email (EMAIL tickets)
+            # or SSE (portal tickets). manager.send() handles channel routing.
             try:
                 commenter = await self._auth.get_user(current_user_id)
                 agent_name = commenter.email.split("@")[0]
             except Exception:
                 agent_name = "Support Agent"
 
-            await notification_manager.send(
-                request=AgentCommentRequest(
-                    ticket_id=ticket.ticket_id,
-                    ticket_number=ticket.ticket_number,
-                    ticket_title=ticket.title,
-                    status=ticket.status.value,
-                    severity=ticket.severity.value,
-                    customer_id=ticket.customer_id,
-                    agent_name=agent_name,
-                    comment_body=comment.body,
-                ),
-                db=self.db,
-                auth_client=self._auth,
-            )
+            if ticket.source == TicketSource.EMAIL:
+                # AI-drafted email reply for email-origin tickets
+                _fire_notification(
+                    request=AgentCommentRequest(
+                        ticket_id=ticket.ticket_id,
+                        ticket_number=ticket.ticket_number,
+                        ticket_title=ticket.title,
+                        status=ticket.status.value,
+                        severity=ticket.severity.value,
+                        customer_id=ticket.customer_id,
+                        agent_name=agent_name,
+                        comment_body=comment.body,
+                    ),
+                    auth_client=self._auth,
+                )
+            else:
+                _fire_notification(
+                    request=StatusChangedRequest(
+                        ticket_id=ticket.ticket_id,
+                        ticket_number=ticket.ticket_number,
+                        ticket_title=ticket.title,
+                        old_status=ticket.status.value,
+                        new_status=ticket.status.value,
+                        severity=ticket.severity.value,
+                        customer_id=ticket.customer_id,
+                        agent_name=agent_name,
+                    ),
+                    auth_client=self._auth,
+                )
 
         return saved
