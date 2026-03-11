@@ -87,6 +87,8 @@ class Ticket(Base):
     resolution_sla_breached_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     escalation_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_escalated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_breached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     auto_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(

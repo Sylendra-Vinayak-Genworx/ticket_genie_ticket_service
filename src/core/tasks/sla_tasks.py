@@ -70,6 +70,8 @@ async def _detect_sla_breaches_async() -> None:
             try:
                 ticket.response_sla_breached_at = now
                 ticket.escalation_level += 1
+                ticket.is_breached = True
+                ticket.is_escalated = True
                 await repo.save(ticket)
 
                 await event_repo.add(_make_sla_event(
@@ -101,6 +103,8 @@ async def _detect_sla_breaches_async() -> None:
             try:
                 ticket.resolution_sla_breached_at = now
                 ticket.escalation_level += 1
+                ticket.is_breached = True
+                ticket.is_escalated = True
                 await repo.save(ticket)
 
                 await event_repo.add(_make_sla_event(
