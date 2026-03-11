@@ -52,7 +52,7 @@ ALLOWED_TRANSITIONS: dict[TicketStatus, list[TicketStatus]] = {
     TicketStatus.NEW:          [TicketStatus.ACKNOWLEDGED],
     TicketStatus.ACKNOWLEDGED: [TicketStatus.OPEN],
     TicketStatus.OPEN:         [TicketStatus.IN_PROGRESS],
-    TicketStatus.IN_PROGRESS:  [TicketStatus.ON_HOLD, TicketStatus.RESOLVED,TicketStatus.OPEN],
+    TicketStatus.IN_PROGRESS:  [TicketStatus.ON_HOLD, TicketStatus.RESOLVED],
     TicketStatus.ON_HOLD:      [TicketStatus.IN_PROGRESS],
     TicketStatus.RESOLVED:     [TicketStatus.CLOSED],
     TicketStatus.CLOSED:       [TicketStatus.OPEN],   # reopen
@@ -245,7 +245,7 @@ class TicketService:
         old_status = ticket.status
         new_status = payload.new_status
 
-        if UserRole(current_user_role) == UserRole.CUSTOMER and old_status!= TicketStatus.RESOLVED:
+        if UserRole(current_user_role) == UserRole.CUSTOMER:
             raise InsufficientPermissionsError("Customers cannot update ticket status.")
 
         allowed = ALLOWED_TRANSITIONS.get(old_status, [])
@@ -337,7 +337,7 @@ class TicketService:
             ticket.assignee_id = payload.assignee_id
 
         # team_id: prefer the explicit argument, then the payload, then keep existing
-        resolved_team_id = team_id 
+        resolved_team_id = team_id or payload.team_id
         if resolved_team_id is not None:
             ticket.team_id = resolved_team_id
 

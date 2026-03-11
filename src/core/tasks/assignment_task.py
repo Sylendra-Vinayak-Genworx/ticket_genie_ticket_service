@@ -1,3 +1,25 @@
+"""
+src/core/tasks/assignment_task.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Auto-assignment Celery task.
+
+Routing pipeline
+----------------
+1. Run AutoAssignmentService: score agents by experience / (1 + workload) for
+   the ticket's area_of_concern, fall back to least-loaded agent globally.
+   The service writes assignee_id (agent) AND team_id.
+
+2. If no agent found → fallback to least-loaded LEAD (via Auth Service).
+   The lead is NOTIFIED but never written into assignee_id.
+   Instead, ticket.team_id is set to the lead's team_id so the ticket
+   appears in the correct team queue for any agent to self-claim.
+   ticket.assignee_id remains NULL.
+
+3. If no lead available → move ticket to OPEN queue (team_id = NULL).
+
+4. Beat job `check_lead_timeout` watches AI_FAILED tickets and moves them
+   to the OPEN queue when no agent self-claimed within the timeout window.
+"""
 from __future__ import annotations
 
 import logging
@@ -17,6 +39,10 @@ from src.data.repositories.ticket_assignment_repositoty import TicketAssignmentR
 
 logger = logging.getLogger(__name__)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 1 — Score-based agent assignment
+# ─────────────────────────────────────────────────────────────────────────────
 
 async def _score_assign_ticket(ticket_id: int) -> bool:
     """

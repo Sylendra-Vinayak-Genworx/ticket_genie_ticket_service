@@ -1,3 +1,17 @@
+"""
+TicketAssignmentRepository
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+All raw SQL / ORM queries needed by the auto-assignment service.
+Kept here so the service layer stays free of query concerns.
+
+Key invariant
+-------------
+  assignee_id  → always an AGENT's user_id (never a lead's user_id)
+  team_id      → the team that owns the ticket (set on assignment / escalation)
+
+Workload is therefore always measured against assignee_id, and team membership
+is never inferred from routing_status hacks.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
