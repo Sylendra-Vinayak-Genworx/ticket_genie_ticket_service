@@ -31,6 +31,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
+    from src.core.services.notification.adapter import apply_notification_patch
+    apply_notification_patch()
+    
     setup_logging()
     app = FastAPI(
         title="Ticketing Genie — Ticketing Service",

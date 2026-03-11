@@ -1,17 +1,3 @@
-"""
-src/core/tasks/assignment_task.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Auto-assignment Celery task.
-
-Routing pipeline
-----------------
-1. Run AutoAssignmentService: score agents by experience / (1 + workload) for
-   the ticket's area_of_concern, fall back to least-loaded agent globally.
-2. If no agent found → fallback to least-loaded lead (via Auth Service).
-3. If no lead available → move ticket to OPEN queue.
-4. Beat job `check_lead_timeout` watches fallback-assigned tickets and moves them
-   to the OPEN queue when the lead hasn't re-assigned within the configured window.
-"""
 from __future__ import annotations
 
 import logging
@@ -27,17 +13,16 @@ from src.data.clients.postgres_client import AsyncSessionFactory
 from src.data.models.postgres.ticket_event import TicketEvent
 from src.data.repositories.ticket_event_repository import TicketEventRepository
 from src.data.repositories.ticket_repository import TicketRepository
+from src.data.repositories.ticket_assignment_repositoty import TicketAssignmentRepository
 
 logger = logging.getLogger(__name__)
 
 
-
 async def _score_assign_ticket(ticket_id: int) -> bool:
     """
-    Delegate to AutoAssignmentService which scores agents using:
-        score = experience / (1 + workload)
+    Delegate to AutoAssignmentService (experience / workload score).
 
-    Returns True  → an agent was assigned.
+    Returns True  → an agent was assigned (assignee_id + team_id stamped).
     Returns False → no agent found; caller should invoke _fallback_to_lead.
     """
     async with AsyncSessionFactory() as session:
@@ -60,8 +45,8 @@ async def _score_assign_ticket(ticket_id: int) -> bool:
         )
 
         if result.assigned_to:
-            # assign_ticket() sets assignee_id + transitions to OPEN but never
-            # writes routing_status or assigned_agent_id. Stamp them now.
+            # assign_ticket() already flushed assignee_id + team_id.
+            # Stamp routing_status + queue_type now.
             refreshed = await ticket_repo.get_by_id(ticket_id, eager=False)
             if refreshed:
                 refreshed.routing_status = RoutingStatus.SUCCESS.value
@@ -69,9 +54,10 @@ async def _score_assign_ticket(ticket_id: int) -> bool:
                 session.add(refreshed)
             await session.commit()
             logger.info(
-                "[ticket=%s] Score-based routing SUCCESS → agent=%s "
+                "[ticket=%s] Score-based routing SUCCESS → agent=%s team=%s "
                 "(strategy=%s, score=%s)",
-                ticket_id, result.assigned_to, result.strategy, result.score,
+                ticket_id, result.assigned_to, result.team_id,
+                result.strategy, result.score,
             )
             return True
 
@@ -83,27 +69,33 @@ async def _score_assign_ticket(ticket_id: int) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2 — Fallback: least-loaded lead  (original implementation)
+# Step 2 — Fallback: least-loaded lead  (team-based, NOT assignee_id)
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _fallback_to_lead(ticket_id: int) -> None:
     """
-    Fallback when similarity routing fails.
+    Fallback when score-based routing fails.
 
-    Strategy
-    --------
+    Strategy (FIXED)
+    ----------------
+    OLD (broken): ticket.assignee_id = lead_id
+        → Pollutes workload queries, lead receives all agent work.
+
+    NEW (correct):
     1. Fetch all users from Auth Service.
-    2. Filter LEAD users.
-    3. Select least-loaded lead by active ticket count.
-    4. Assign ticket to that lead (routing_status = AI_FAILED so the
-       beat job can watch it for the re-assign timeout).
-    5. If no lead available → move ticket directly to OPEN queue.
+    2. Filter role == LEAD users, collect their user_id AND team_id.
+    3. Select least-loaded lead by active ticket count (via assignment repo).
+    4. Set ticket.team_id = lead.team_id  (ticket enters the team queue).
+       ticket.assignee_id remains NULL — any agent in the team can self-claim.
+    5. Set routing_status = AI_FAILED so the beat job can watch it.
+    6. If no lead available → OPEN queue.
     """
     now = datetime.now(timezone.utc)
 
     async with AsyncSessionFactory() as session:
         ticket_repo = TicketRepository(session)
         event_repo = TicketEventRepository(session)
+        assignment_repo = TicketAssignmentRepository(session)
 
         ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
 
@@ -112,36 +104,36 @@ async def _fallback_to_lead(ticket_id: int) -> None:
             return
 
         if ticket.assignee_id:
-            logger.info("[ticket=%s] already assigned", ticket_id)
+            logger.info("[ticket=%s] already assigned to agent — skipping fallback", ticket_id)
             return
 
         lead_id: str | None = None
+        lead_team_id: str | None = None
 
         try:
             users = await auth_client.get_all_users()
-
             if not users:
-                raise Exception("No users returned from auth service")
+                raise ValueError("No users returned from auth service")
 
-            lead_ids = [
-                u.lead_id for u in users if u.lead_id is not None
-            ]
+            # Extract leads with their team_id — never infer role from ticket data
+            leads = [u for u in users if u.role in ("team_lead", "LEAD", "lead")]
+            if not leads:
+                raise ValueError("No lead users found in auth service")
 
-            if not lead_ids:
-                raise Exception("No leads found")
+            lead_ids = [u.id for u in leads]
+            lead_team_map = {u.id: u.team_id for u in leads}
 
-            counts = await ticket_repo.get_ticket_count_for_leads(lead_ids)
-
-            for lid in lead_ids:
-                counts.setdefault(lid, 0)
-
-            lead_id = min(counts, key=counts.get)
+            # Use assignment repo to pick least-loaded lead, preferring same team
+            chosen_lead_id = await assignment_repo.get_least_loaded_lead_for_team(
+                lead_ids=lead_ids,
+                team_id=ticket.team_id,
+            )
+            lead_id = chosen_lead_id
+            lead_team_id = lead_team_map.get(chosen_lead_id) if chosen_lead_id else None
 
             logger.info(
-                "[ticket=%s] least-loaded lead=%s ticket_count=%s",
-                ticket_id,
-                lead_id,
-                counts[lead_id],
+                "[ticket=%s] fallback → lead=%s team=%s",
+                ticket_id, lead_id, lead_team_id,
             )
 
         except Exception:
@@ -151,32 +143,38 @@ async def _fallback_to_lead(ticket_id: int) -> None:
             )
 
         ticket.routing_status = RoutingStatus.AI_FAILED.value
-        ticket.lead_assigned_at = now
+        ticket.fallback_assigned_at = now
 
         if lead_id:
-            ticket.assignee_id = lead_id
+            # Route to the LEAD'S TEAM — assignee_id stays NULL
+            ticket.team_id = lead_team_id or ticket.team_id
             ticket.queue_type = QueueType.DIRECT.value
+            # assignee_id intentionally NOT set here
 
             await event_repo.add(
                 TicketEvent(
                     ticket_id=ticket.ticket_id,
                     triggered_by_user_id=None,
                     event_type=EventType.ASSIGNED,
-                    field_name="assignee_id",
+                    field_name="team_id",
                     old_value=None,
-                    new_value=lead_id,
-                    reason="AI routing failed — assigned to least loaded lead",
+                    new_value=lead_team_id,
+                    reason=(
+                        f"AI routing failed — routed to team of lead={lead_id}; "
+                        "assignee_id left NULL for team self-claim"
+                    ),
                 )
             )
 
             logger.info(
-                "[ticket=%s] assigned to lead=%s",
-                ticket_id,
-                lead_id,
+                "[ticket=%s] fallback: team_id=%s (lead=%s notified, assignee=NULL)",
+                ticket_id, lead_team_id, lead_id,
             )
 
         else:
+            # Genuinely no lead — dump to open queue
             ticket.assignee_id = None
+            ticket.team_id = None
             ticket.queue_type = QueueType.OPEN.value
 
             await event_repo.add(
@@ -184,21 +182,22 @@ async def _fallback_to_lead(ticket_id: int) -> None:
                     ticket_id=ticket.ticket_id,
                     triggered_by_user_id=None,
                     event_type=EventType.ASSIGNED,
-                    field_name="assignee_id",
+                    field_name="queue_type",
                     old_value=None,
                     new_value=QueueType.OPEN.value,
-                    reason="AI routing failed and no lead available",
+                    reason="AI routing failed and no lead available — moved to OPEN queue",
                 )
             )
 
-            logger.warning(
-                "[ticket=%s] moved to OPEN queue",
-                ticket_id,
-            )
+            logger.warning("[ticket=%s] moved to OPEN queue (no lead available)", ticket_id)
 
         await ticket_repo.save(ticket)
         await session.commit()
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3 — Timeout: move unclaimed fallback tickets to OPEN queue
+# ─────────────────────────────────────────────────────────────────────────────
 
 async def _move_to_open_queue(ticket_id: int) -> None:
     """Move a fallback-assigned ticket to the OPEN queue after the timeout."""
@@ -212,9 +211,10 @@ async def _move_to_open_queue(ticket_id: int) -> None:
             logger.warning("[ticket=%s] _move_to_open_queue: ticket not found", ticket_id)
             return
 
-        old_assignee = ticket.assignee_id
+        old_team = ticket.team_id
 
         ticket.assignee_id = None
+        ticket.team_id = None
         ticket.queue_type = QueueType.OPEN.value
         ticket.status = TicketStatus.OPEN
 
@@ -227,14 +227,17 @@ async def _move_to_open_queue(ticket_id: int) -> None:
             field_name="status",
             old_value=TicketStatus.ACKNOWLEDGED.value,
             new_value=TicketStatus.OPEN.value,
-            reason=f"Fallback agent '{old_assignee}' did not re-assign within the timeout window",
+            reason=(
+                f"Fallback team '{old_team}' did not self-claim within the timeout window "
+                "— moved to OPEN queue"
+            ),
         ))
 
         await session.commit()
 
         logger.info(
-            "[ticket=%s] Moved to OPEN queue (fallback agent=%s timed out)",
-            ticket_id, old_assignee,
+            "[ticket=%s] Moved to OPEN queue (team=%s timed out)",
+            ticket_id, old_team,
         )
 
 
@@ -256,10 +259,10 @@ def auto_assign_ticket(self, ticket_id: int, ticket_title: str):
 
     Flow
     ----
-    similarity_assign  →  SUCCESS  → done
+    score_assign  →  SUCCESS  → done (assignee_id + team_id set)
          ↓ False / exception
-    fallback_to_lead   →  lead assigned (AI_FAILED, beat job watches it)
-                       →  no lead     → OPEN queue
+    fallback_to_lead  →  team_id set, assignee_id = NULL, beat job watches
+                      →  no lead → OPEN queue
     """
     logger.info(
         "[ticket=%s] auto_assign_ticket started (attempt=%d/%d)",
@@ -292,15 +295,16 @@ def auto_assign_ticket(self, ticket_id: int, ticket_title: str):
     return {
         "ticket_id": ticket_id,
         "routing_status": RoutingStatus.AI_FAILED.value,
-        "message": "Score routing found no agent — assigned to least-loaded lead",
+        "message": "Score routing found no agent — routed to lead team queue (assignee=NULL)",
     }
 
 
 @celery_app.task(name="tasks.check_lead_timeout")
 def check_lead_timeout():
     """
-    Beat job: find tickets where the fallback lead hasn't re-assigned within
-    the configured timeout window and move them to the OPEN queue.
+    Beat job: find tickets in AI_FAILED routing state where no agent has
+    self-claimed within the configured timeout window, and move them to the
+    OPEN queue.
     """
     settings = get_settings()
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.LEAD_TIMEOUT_MINUTES)

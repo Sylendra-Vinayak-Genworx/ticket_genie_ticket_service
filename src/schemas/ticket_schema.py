@@ -221,9 +221,13 @@ class TicketListFilters(BaseModel):
     priority: Optional[Priority] = None
     is_breached: Optional[bool] = None
     is_escalated: Optional[bool] = None
-    customer_id: Optional[str] = None   
+    is_unassigned: Optional[bool] = None
+    customer_id: Optional[str] = None
     assignee_id: Optional[str] = None
-    assignee_ids:Optional[list[str]] = None
+    assignee_ids: Optional[list[str]] = None
+    team_id: Optional[str] = None
+    queue_type: Optional[str] = None
+    routing_status: Optional[str] = None
     page: int = 1
     page_size: int = 20
 

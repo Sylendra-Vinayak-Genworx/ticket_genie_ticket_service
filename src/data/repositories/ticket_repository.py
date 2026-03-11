@@ -1,5 +1,3 @@
-
-
 from datetime import datetime
 from typing import Optional
 
@@ -250,8 +248,8 @@ class TicketRepository:
             select(Ticket).where(
                 Ticket.routing_status == RoutingStatus.AI_FAILED.value,
                 Ticket.queue_type == QueueType.DIRECT.value,
-                Ticket.lead_assigned_at.isnot(None),
-                Ticket.lead_assigned_at < cutoff,
+                Ticket.fallback_assigned_at.isnot(None),
+                Ticket.fallback_assigned_at < cutoff,
                 Ticket.assignee_id.isnot(None),
                 Ticket.status.in_([
                     TicketStatus.ACKNOWLEDGED,

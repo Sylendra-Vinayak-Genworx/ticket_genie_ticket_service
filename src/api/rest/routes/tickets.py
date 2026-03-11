@@ -3,13 +3,11 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.api.rest.dependencies import (
-    AuthClientDep,
     CurrentUserID,
     CurrentUserRole,
     TicketServiceDep,
 )
-from src.data.clients.auth_client import AuthServiceClient
-from src.constants.enum import Priority, Severity, TicketStatus, UserRole
+from src.constants.enum import Priority, Severity, TicketStatus
 
 from src.schemas.common_schema import PaginatedResponse
 from src.schemas.ticket_schema import (
@@ -91,7 +89,6 @@ async def get_my_tickets(
 )
 async def list_all_tickets(
     svc: TicketServiceDep,
-    auth: AuthClientDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
     page: int = Query(default=1, ge=1),
@@ -101,8 +98,12 @@ async def list_all_tickets(
     priority: Optional[Priority] = Query(default=None),
     is_breached: Optional[bool] = Query(default=None),
     is_escalated: Optional[bool] = Query(default=None),
+    is_unassigned: Optional[bool] = Query(default=None),
     customer_id: Optional[str] = Query(default=None),
     assignee_id: Optional[str] = Query(default=None),
+    team_id: Optional[str] = Query(default=None),
+    queue_type: Optional[str] = Query(default=None),
+    routing_status: Optional[str] = Query(default=None),
 ):
     filters = TicketListFilters(
         page=page,
@@ -112,24 +113,16 @@ async def list_all_tickets(
         priority=priority,
         is_breached=is_breached,
         is_escalated=is_escalated,
+        is_unassigned=is_unassigned,
         customer_id=customer_id,
         assignee_id=assignee_id,
+        team_id=team_id,
+        queue_type=queue_type,
+        routing_status=routing_status,
     )
-    # Team leads only see tickets assigned to themselves or their team members
-    lead_member_ids = None
-    if user_role == UserRole.LEAD.value:
-        try:
-            all_users = await auth.get_all_users()
-            lead_member_ids = [
-                u.id for u in all_users
-                if u.lead_id == user_id or u.id == user_id
-            ] or [user_id]
-        except Exception:
-            lead_member_ids = [user_id]
     total, tickets = await svc.get_all_tickets(
         filters=filters,
         current_user_role=user_role,
-        lead_member_ids=lead_member_ids,
     )
     return PaginatedResponse(
         total=total,
