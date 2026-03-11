@@ -154,23 +154,18 @@ class NotificationManager:
         the user's preferred_mode_of_contact.
 
         TICKET_ASSIGNED and SLA_BREACHED always return both.
+        In-app SSE notifications are always dispatched to connected clients.
         """
         if ntype in _ALWAYS_BOTH:
             return {"email", "sse"}
 
         mode = getattr(user, "preferred_mode_of_contact", _MODE_EMAIL) or _MODE_EMAIL
 
-        if mode == _MODE_EMAIL:
-            return {"email"}
         if mode == _MODE_PORTAL:
             return {"sse"}
 
-        # Unrecognised value → safe default
-        logger.warning(
-            "notification_manager: unknown contact mode=%r for user=%s — defaulting to email",
-            mode, user.id,
-        )
-        return {"email"}
+        # If mode is email or unknown, send email AND sse (always try to push to live UI)
+        return {"email", "sse"}
 
     # ── User resolution ───────────────────────────────────────────────────────
 

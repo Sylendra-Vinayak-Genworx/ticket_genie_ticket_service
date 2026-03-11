@@ -1,7 +1,3 @@
-"""
-Pydantic v2 schemas for the Ticket pipeline.
-"""
-
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -128,6 +124,7 @@ class TicketBriefResponse(BaseModel):
     customer_tier_id: Optional[int] = None
     is_breached: bool = False
     is_escalated: bool = False
+    escalation_level: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -224,8 +221,9 @@ class TicketListFilters(BaseModel):
     priority: Optional[Priority] = None
     is_breached: Optional[bool] = None
     is_escalated: Optional[bool] = None
-    customer_id: Optional[str] = None
+    customer_id: Optional[str] = None   
     assignee_id: Optional[str] = None
+    assignee_ids:Optional[list[str]] = None
     page: int = 1
     page_size: int = 20
 

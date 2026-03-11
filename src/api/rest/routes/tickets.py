@@ -3,10 +3,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.api.rest.dependencies import (
+    AuthClientDep,
     CurrentUserID,
     CurrentUserRole,
     TicketServiceDep,
 )
+from src.data.clients.auth_client import AuthServiceClient
 from src.constants.enum import Priority, Severity, TicketStatus, UserRole
 
 from src.schemas.common_schema import PaginatedResponse
@@ -89,6 +91,7 @@ async def get_my_tickets(
 )
 async def list_all_tickets(
     svc: TicketServiceDep,
+    auth: AuthClientDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
     page: int = Query(default=1, ge=1),
@@ -112,9 +115,21 @@ async def list_all_tickets(
         customer_id=customer_id,
         assignee_id=assignee_id,
     )
+    # Team leads only see tickets assigned to themselves or their team members
+    lead_member_ids = None
+    if user_role == UserRole.LEAD.value:
+        try:
+            all_users = await auth.get_all_users()
+            lead_member_ids = [
+                u.id for u in all_users
+                if u.lead_id == user_id or u.id == user_id
+            ] or [user_id]
+        except Exception:
+            lead_member_ids = [user_id]
     total, tickets = await svc.get_all_tickets(
         filters=filters,
         current_user_role=user_role,
+        lead_member_ids=lead_member_ids,
     )
     return PaginatedResponse(
         total=total,

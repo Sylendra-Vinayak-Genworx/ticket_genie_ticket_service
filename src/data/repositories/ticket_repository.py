@@ -1,9 +1,4 @@
-"""
-Ticket repository — manages the ``tickets`` table ONLY.
 
-This repository must NOT query or mutate any other table.
-Cross-table orchestration belongs in the service layer.
-"""
 
 from datetime import datetime
 from typing import Optional
@@ -46,10 +41,7 @@ class TicketRepository:
         return result.scalar_one_or_none()
 
     async def next_ticket_number(self) -> str:
-        """
-        Generates TKT-XXXX.
-        Uses COUNT + 1; safe under the DB-level unique constraint on ticket_number.
-        """
+       
         result = await self.db.execute(select(func.count(Ticket.ticket_id)))
         count = result.scalar_one()
         return f"TKT-{count + 1:04d}"
@@ -81,8 +73,9 @@ class TicketRepository:
     async def get_escalatable(self, now: datetime) -> list[Ticket]:
         result = await self.db.execute(
             select(Ticket).where(
-                Ticket.is_breached == True,   # noqa: E712
-                Ticket.is_escalated == False, # noqa: E712
+                Ticket.resolution_sla_breached_at != None,   # noqa: E712
+                Ticket.response_sla_breached_at!=None,
+                Ticket.escalation_level > 0, # noqa: E712
                 Ticket.status.not_in([TicketStatus.RESOLVED, TicketStatus.CLOSED]),
             )
         )
@@ -137,21 +130,7 @@ class TicketRepository:
         max_active_tickets: int = 10,
         exclude_ids: set[str] | None = None,
     ) -> str | None:
-        """
-        Find the best fallback agent purely from the tickets table.
 
-        Strategy
-        --------
-        1. Build the pool of *experienced* agents: everyone who appears as
-           ``assignee_id`` on at least one RESOLVED or CLOSED ticket.
-           (Avoids routing to accounts that have never handled a ticket.)
-        2. Optionally exclude specific IDs (e.g. the ticket's current assignee).
-        3. Among the experienced pool, pick the agent whose current active-
-           ticket count is lowest and who is under *max_active_tickets*.
-        4. If **all** experienced agents are over the cap, fall back to the
-           one with the absolute minimum load rather than leaving the ticket
-           unassigned.
-        """
         # Step 1 – experienced agents (at least one resolved/closed ticket)
         exp_stmt = (
             select(Ticket.assignee_id)
@@ -230,17 +209,7 @@ class TicketRepository:
         self,
         exclude_agent_id: str | None = None,
     ) -> str | None:
-        """
-        Return the lead with the fewest currently-active tickets.
-
-        "Lead" is inferred from ticket history: any agent who has ever been
-        assigned a ticket via the AI_FAILED fallback path is treated as a
-        lead.  This avoids any dependency on the agent_profiles table.
-
-        Among the inferred lead pool, the agent whose count of non-terminal
-        (not RESOLVED / CLOSED) tickets is lowest wins.  Agents with zero
-        active tickets are preferred over all others.
-        """
+        
         # Step 1 — infer leads from AI_FAILED routing history
         leads_stmt = (
             select(Ticket.assignee_id)
@@ -276,14 +245,7 @@ class TicketRepository:
         return min(lead_ids, key=lambda aid: active_counts.get(aid, 0))
 
     async def get_lead_timed_out_tickets(self, cutoff: datetime) -> list[Ticket]:
-        """
-        Tickets that were assigned to a lead after AI failure but the lead
-        hasn't re-assigned within the timeout window.  Condition:
-          - routing_status = AI_FAILED
-          - queue_type = DIRECT  (still assigned, not yet open)
-          - lead_assigned_at < cutoff
-          - assignee_id IS NOT NULL (still assigned to lead)
-        """
+        
         result = await self.db.execute(
             select(Ticket).where(
                 Ticket.routing_status == RoutingStatus.AI_FAILED.value,
@@ -380,10 +342,12 @@ class TicketRepository:
             stmt = stmt.where(Ticket.customer_id == filters.customer_id)
         if filters.assignee_id:
             stmt = stmt.where(Ticket.assignee_id == filters.assignee_id)
+        if filters.assignee_ids:
+            stmt = stmt.where(Ticket.assignee_id.in_(filters.assignee_ids))
         if filters.is_breached is not None:
-            stmt = stmt.where(Ticket.is_breached == filters.is_breached)
+            stmt = stmt.where(Ticket.resolution_sla_breached_at!=None and Ticket.response_sla_breached_at!=None == filters.is_breached)
         if filters.is_escalated is not None:
-            stmt = stmt.where(Ticket.is_escalated == filters.is_escalated)
+            stmt = stmt.where((Ticket.escalation_level>0) == filters.is_escalated)
         return stmt
 
     async def _paginate(

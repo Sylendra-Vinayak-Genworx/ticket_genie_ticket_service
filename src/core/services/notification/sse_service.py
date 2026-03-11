@@ -26,17 +26,59 @@ logger = logging.getLogger(__name__)
 
 class SSEBus:
     """
-    In-memory pub/sub bus.
+    In-memory pub/sub bus backed by Redis pub/sub for multi-process coordination.
     user_id (str) → asyncio.Queue of JSON-encoded event strings.
     One queue per active browser tab/connection.
-    Thread-safe for single-process deployments.
-    For multi-process, replace with Redis pub/sub.
     """
 
     def __init__(self) -> None:
         self._queues: dict[str, list[asyncio.Queue]] = {}
+        self._redis = None
+        self._listener_task = None
 
-    def subscribe(self, user_id: str) -> asyncio.Queue:
+    async def _get_redis(self):
+        if self._redis is None:
+            from src.config.settings import get_settings
+            import redis.asyncio as aioredis
+            settings = get_settings()
+            self._redis = aioredis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        return self._redis
+
+    async def _listen_redis(self) -> None:
+        r = await self._get_redis()
+        pubsub = r.pubsub()
+        await pubsub.subscribe("sse_broadcast")
+        logger.info("sse_bus: Redis pub/sub listener started")
+        try:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        user_id = data.get("user_id")
+                        event = data.get("event")
+                        if user_id and event:
+                            self._local_push(user_id, event)
+                    except Exception as e:
+                        logger.error("sse_bus: listen parse error: %s", e)
+        except asyncio.CancelledError:
+            logger.info("sse_bus: Redis pub/sub listener cancelled")
+        except Exception as e:
+            logger.error("sse_bus: Redis pub/sub listener failed with error: %s", e)
+        finally:
+            try:
+                await pubsub.unsubscribe("sse_broadcast")
+                await pubsub.close()
+            except Exception:
+                pass
+            
+            self._listener_task = None
+            logger.info("sse_bus: Redis pub/sub listener stopped and task reset")
+
+    async def subscribe(self, user_id: str) -> asyncio.Queue:
+        if self._listener_task is None or self._listener_task.done():
+            logger.info("sse_bus: creating redis listener task")
+            self._listener_task = asyncio.create_task(self._listen_redis())
+            
         q: asyncio.Queue = asyncio.Queue(maxsize=50)
         self._queues.setdefault(user_id, []).append(q)
         logger.debug("sse_bus: user_id=%s subscribed (connections=%d)", user_id, len(self._queues[user_id]))
@@ -50,11 +92,18 @@ class SSEBus:
             self._queues.pop(user_id, None)
         logger.debug("sse_bus: user_id=%s unsubscribed", user_id)
 
-    def push(self, user_id: str, event: dict) -> None:
-        """Push an event to all active connections for this user."""
+    async def push(self, user_id: str, event: dict) -> None:
+        """Publish an event to all active connections (across all processes) for this user."""
+        logger.info("sse_bus: publishing event to Redis for user_id=%s type=%s", user_id, event.get("type"))
+        payload = json.dumps({"user_id": user_id, "event": event})
+        r = await self._get_redis()
+        await r.publish("sse_broadcast", payload)
+
+    def _local_push(self, user_id: str, event: dict) -> None:
+        """Push an event to all active connections for this user locally."""
         queues = self._queues.get(user_id, [])
         if not queues:
-            logger.debug("sse_bus: user_id=%s not connected — event dropped", user_id)
+            logger.debug("sse_bus: user_id=%s not locally connected — event dropped", user_id)
             return
         payload = json.dumps(event)
         for q in queues:
@@ -178,7 +227,7 @@ class SSENotificationService:
         now = datetime.now(timezone.utc)
         payload["timestamp"] = now.isoformat()
 
-        sse_bus.push(recipient_id, payload)
+        await sse_bus.push(recipient_id, payload)
 
         
         await self._repo.add(NotificationLog(
