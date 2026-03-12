@@ -57,15 +57,21 @@ class Ticket(Base):
     customer_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     assignee_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
-  
-    assigned_agent_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # team_id: the Auth-Service team this ticket is currently owned by.
+    # Set on creation (from the routed agent's team) and updated on escalation
+    # (to the lead's team).  Never points at an individual user — that is
+    # exclusively the job of assignee_id.
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
     queue_type: Mapped[str] = mapped_column(
         String(50), nullable=False, default=QueueType.DIRECT.value,
     )
     routing_status: Mapped[str] = mapped_column(
         String(50), nullable=False, default=RoutingStatus.SUCCESS.value,
     )
-    lead_assigned_at: Mapped[Optional[datetime]] = mapped_column(
+    # Timestamp of when the ticket entered AI_FAILED / lead-fallback state.
+    # Watched by check_lead_timeout beat job.
+    fallback_assigned_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )
 
@@ -87,6 +93,8 @@ class Ticket(Base):
     resolution_sla_breached_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     escalation_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_escalated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_breached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     auto_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(

@@ -61,6 +61,50 @@ async def _detect_sla_breaches_async() -> None:
         sla_svc = SLAService(SLARepository(db), SLARuleRepository(db))
         ticket_svc = TicketService(db, auth_client)
 
+        # Pre-fetch all users once so we can resolve leads without N+1 calls
+        all_users = []
+        try:
+            all_users = await auth_client.get_all_users()
+            lead_users = [u for u in all_users if u.role in ("team_lead", "LEAD", "lead")]
+            # Map: user_id → team_id  (for leads)
+            lead_team_map: dict[str, str | None] = {u.id: u.team_id for u in lead_users}
+            lead_ids: list[str] = list(lead_team_map.keys())
+        except Exception:
+            logger.exception("_detect_sla_breaches_async: failed to fetch users from auth service")
+            lead_ids = []
+            lead_team_map = {}
+
+        def _resolve_lead(ticket) -> tuple[str | None, str | None]:
+            """
+            For a ticket, find the best lead to notify.
+
+            Priority:
+              1. The assignee's own lead_id (from auth data fetched above).
+              2. Any lead that shares the ticket's team_id.
+              3. First available lead.
+
+            Returns (lead_id, lead_team_id).
+            Never returns the current assignee as the lead.
+            """
+            if not lead_ids:
+                return None, None
+
+            # Try assignee's own lead_id
+            if ticket.assignee_id:
+                for u in all_users:
+                    if u.id == ticket.assignee_id and u.lead_id and u.lead_id in lead_team_map:
+                        return u.lead_id, lead_team_map[u.lead_id]
+
+            # Prefer a lead from the same team
+            if ticket.team_id:
+                for lid in lead_ids:
+                    if lead_team_map.get(lid) == ticket.team_id:
+                        return lid, ticket.team_id
+
+            # Any lead as last resort
+            first = lead_ids[0]
+            return first, lead_team_map.get(first)
+
         # ── Response SLA ──────────────────────────────────────────────
         response_candidates = await repo.get_response_sla_candidates(now)
 
@@ -70,6 +114,8 @@ async def _detect_sla_breaches_async() -> None:
             try:
                 ticket.response_sla_breached_at = now
                 ticket.escalation_level += 1
+                ticket.is_breached = True
+                ticket.is_escalated = True
                 await repo.save(ticket)
 
                 await event_repo.add(_make_sla_event(
@@ -77,16 +123,20 @@ async def _detect_sla_breaches_async() -> None:
                     reason=f"Response SLA breached — escalation level {ticket.escalation_level}",
                 ))
 
+                lead_id, lead_team_id = _resolve_lead(ticket)
+
                 await ticket_svc.escalate(
                     ticket=ticket,
                     reason=f"Response SLA breached — escalation level {ticket.escalation_level}",
                     now=now,
+                    lead_id=lead_id,
+                    lead_team_id=lead_team_id,
                 )
 
                 await db.commit()
                 logger.info(
-                    "response_sla_breached: ticket_id=%s level=%s",
-                    ticket.ticket_id, ticket.escalation_level,
+                    "response_sla_breached: ticket_id=%s level=%s lead=%s team=%s",
+                    ticket.ticket_id, ticket.escalation_level, lead_id, lead_team_id,
                 )
             except Exception as exc:
                 await db.rollback()
@@ -101,6 +151,8 @@ async def _detect_sla_breaches_async() -> None:
             try:
                 ticket.resolution_sla_breached_at = now
                 ticket.escalation_level += 1
+                ticket.is_breached = True
+                ticket.is_escalated = True
                 await repo.save(ticket)
 
                 await event_repo.add(_make_sla_event(
@@ -108,16 +160,20 @@ async def _detect_sla_breaches_async() -> None:
                     reason=f"Resolution SLA breached — escalation level {ticket.escalation_level}",
                 ))
 
+                lead_id, lead_team_id = _resolve_lead(ticket)
+
                 await ticket_svc.escalate(
                     ticket=ticket,
                     reason=f"Resolution SLA breached — escalation level {ticket.escalation_level}",
                     now=now,
+                    lead_id=lead_id,
+                    lead_team_id=lead_team_id,
                 )
 
                 await db.commit()
                 logger.info(
-                    "resolution_sla_breached: ticket_id=%s level=%s",
-                    ticket.ticket_id, ticket.escalation_level,
+                    "resolution_sla_breached: ticket_id=%s level=%s lead=%s team=%s",
+                    ticket.ticket_id, ticket.escalation_level, lead_id, lead_team_id,
                 )
             except Exception as exc:
                 await db.rollback()

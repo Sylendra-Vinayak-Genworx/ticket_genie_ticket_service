@@ -20,7 +20,7 @@ async def notification_stream(user_id: CurrentUserID) -> StreamingResponse:
         data: {"type": "STATUS_CHANGED", "ticket_number": "TKT-0005", ...}\n\n
     """
     async def generator() -> AsyncGenerator[str, None]:
-        queue = sse_bus.subscribe(user_id)
+        queue = await sse_bus.subscribe(user_id)
         yield ": connected\n\n"
         try:
             while True:

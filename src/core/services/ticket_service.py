@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.constants.enum import (
     EventType, Priority, Severity, TicketSource, TicketStatus, UserRole,
+    QueueType, RoutingStatus
 )
 from src.schemas.notification_schema import (
     
@@ -182,6 +183,11 @@ class TicketService:
             resolution_sla_deadline_minutes=sla_config.resolution_deadline_minutes,
             escalation_level=0,
             auto_closed=False,
+            # Initialize explicitly before routing
+            team_id=None,
+            assignee_id=None,
+            queue_type=QueueType.DIRECT.value,
+            routing_status=RoutingStatus.SUCCESS.value,
         )
 
         self._sla_svc.start_response_sla(ticket, now)
@@ -226,14 +232,10 @@ class TicketService:
             "ticket_created: number=%s severity=%s priority=%s user=%s",
             ticket_number, severity, priority, current_user_id,
         )
-        from src.core.tasks.assignment_task import auto_assign_ticket
-        auto_assign_ticket.delay(
-            ticket_id=ticket.ticket_id,
-            ticket_title=ticket.title
-        )
-        logger.info(
-            "auto_assign_ticket: enqueued for ticket_id=%s", ticket.ticket_id
-        )
+        # NOTE: do NOT enqueue auto_assign_ticket here.
+        # The session is still open (flushed, not committed). Enqueueing here
+        # races the commit — the Celery worker opens its own session and finds
+        # the ticket missing.  The route handler enqueues AFTER get_db() commits.
         return ticket
 
 
@@ -249,7 +251,7 @@ class TicketService:
         old_status = ticket.status
         new_status = payload.new_status
 
-        if UserRole(current_user_role) == UserRole.CUSTOMER:
+        if UserRole(current_user_role) == UserRole.CUSTOMER and old_status != TicketStatus.RESOLVED:
             raise InsufficientPermissionsError("Customers cannot update ticket status.")
 
         allowed = ALLOWED_TRANSITIONS.get(old_status, [])
@@ -324,6 +326,7 @@ class TicketService:
         payload: TicketAssignRequest,
         current_user_id: str,
         current_user_role: str,
+        team_id: str | None = None,
     ) -> Ticket:
         ticket = await self._get_or_404(ticket_id)
         role = UserRole(current_user_role)
@@ -332,7 +335,20 @@ class TicketService:
             raise InsufficientPermissionsError("Agents can only self-assign tickets.")
 
         old_assignee = ticket.assignee_id
-        ticket.assignee_id = payload.assignee_id
+
+        # Only update assignee_id when an agent is being assigned.
+        # When routing to a team (fallback / escalation) the assignee_id is
+        # intentionally left NULL so agents can self-claim from the team queue.
+        if payload.assignee_id:
+            ticket.assignee_id = payload.assignee_id
+            ticket.queue_type = QueueType.DIRECT.value
+            ticket.routing_status = RoutingStatus.SUCCESS.value
+
+        # team_id: prefer the explicit argument, then the payload, then keep existing
+        resolved_team_id = team_id
+        if resolved_team_id is not None:
+            ticket.team_id = resolved_team_id
+
         ticket = await self._ticket_repo.save(ticket)
 
         await self._event_repo.add(TicketEvent(
@@ -341,7 +357,7 @@ class TicketService:
             event_type=EventType.ASSIGNED,
             field_name="assignee_id",
             old_value=str(old_assignee) if old_assignee else None,
-            new_value=payload.assignee_id,
+            new_value=ticket.assignee_id or f"team:{ticket.team_id}",
         ))
         await self.transition_status(
             ticket_id=ticket_id,
@@ -352,7 +368,7 @@ class TicketService:
             current_user_id=current_user_id,
             current_user_role=current_user_role
         )
-            
+
         try:
             customer = await self._auth.get_user(ticket.customer_id)
             customer_name = customer.email.split("@")[0]
@@ -367,12 +383,15 @@ class TicketService:
                 severity=ticket.severity.value,
                 status=ticket.status.value,
                 customer_name=customer_name,
-                assignee_id=payload.assignee_id,
+                assignee_id=ticket.assignee_id or "",
             ),
             auth_client=self._auth,
         )
 
-        logger.info("assigned: id=%s → %s by %s", ticket_id, payload.assignee_id, current_user_id)
+        logger.info(
+            "assigned: id=%s → assignee=%s team=%s by %s",
+            ticket_id, ticket.assignee_id, ticket.team_id, current_user_id,
+        )
         return ticket
 
 
@@ -408,23 +427,40 @@ class TicketService:
         ticket: Ticket,
         reason: str,
         now: datetime,
+        lead_id: str | None = None,
+        lead_team_id: str | None = None,
     ) -> Ticket:
         """
         Called by the SLA breach detection task when a response or resolution
         SLA is breached.
 
-        Escalation strategy
-        -------------------
-        Level 1  → look up the assignee's lead_id via AuthService and re-assign
-                   to that lead. If the assignee has no lead or the lookup fails,
-                   keep the current assignee and log a warning.
-        Level 2+ → notify the same lead again + keep current assignee
-                   (human intervention required beyond auto-routing).
+        Escalation strategy (FIXED)
+        ---------------------------
+        The OLD (broken) behaviour was:
+            ticket.assignee_id = lead_id
+        This caused chaos because:
+          - The lead is NOT an agent — they receive alerts and triage, they
+            don't work tickets directly.
+          - All workload / experience queries against assignee_id became
+            polluted with lead user_ids.
+          - The lead's own tickets were counted against the lead's "load",
+            producing wrong least-loaded calculations.
 
-        The breach timestamp and escalation_level increment are owned by the
-        task; this method only handles re-assignment and notification recording.
+        The NEW behaviour:
+          Level 1  → Route the ticket to the LEAD'S TEAM (team_id = lead_team_id).
+                     assignee_id is cleared so any agent in that team can
+                     self-claim the ticket.  The lead is notified (SLA alert)
+                     but is NEVER written into assignee_id.
+          Level 2+ → The ticket is already in the lead's team queue.
+                     Notify the lead again and flag for manual intervention.
+                     team_id is preserved; no fields are clobbered.
+
+        lead_id and lead_team_id are resolved by the caller (assignment_task.py)
+        which has access to Auth Service data.  This method is intentionally
+        free of Auth Service calls so it can be called from within a DB
+        transaction without risk of network-induced rollbacks.
         """
-        # Log the escalation level change on the timeline
+        # ── Timeline event ────────────────────────────────────────────────────
         await self._event_repo.add(TicketEvent(
             ticket_id=ticket.ticket_id,
             triggered_by_user_id=None,                   # SYSTEM-triggered
@@ -435,56 +471,59 @@ class TicketService:
             reason=reason,
         ))
 
-        # Resolve the lead for the current assignee
-        lead_id: str | None = None
-        if ticket.assignee_id:
-            try:
-                assignee: UserDTO = await self._auth.get_user(ticket.assignee_id)
-                lead_id = assignee.lead_id
-            except Exception:
-                logger.exception(
-                    "escalate: failed to fetch assignee user_id=%s for ticket_id=%s",
-                    ticket.assignee_id, ticket.ticket_id,
-                )
+        ticket.routing_status = RoutingStatus.ESCALATED.value
 
         if not lead_id:
             logger.warning(
-                "escalate: ticket_id=%s assignee=%s has no lead_id — "
-                "keeping current assignee",
-                ticket.ticket_id, ticket.assignee_id,
+                "escalate: ticket_id=%s has no resolvable lead — "
+                "ticket remains in current team queue, manual intervention required.",
+                ticket.ticket_id,
             )
             return ticket
 
         if ticket.escalation_level == 1:
-            # First breach — re-assign to the assignee's lead
+            # ── First breach: move ticket into lead's team queue ──────────────
             old_assignee = ticket.assignee_id
-            ticket.assignee_id = lead_id
+            old_team = ticket.team_id
+
+            # Clear individual assignee — the ticket now belongs to the TEAM,
+            # not to any specific person.  Any agent in the team can claim it.
+            ticket.assignee_id = None
+            ticket.team_id = lead_team_id or ticket.team_id
+
             ticket = await self._ticket_repo.save(ticket)
 
             await self._event_repo.add(TicketEvent(
                 ticket_id=ticket.ticket_id,
                 triggered_by_user_id=None,
                 event_type=EventType.ASSIGNED,
-                field_name="assignee_id",
-                old_value=str(old_assignee) if old_assignee else None,
-                new_value=lead_id,
-                reason=f"Escalated to lead after SLA breach (level {ticket.escalation_level})",
+                field_name="team_id",
+                old_value=str(old_team) if old_team else None,
+                new_value=str(ticket.team_id) if ticket.team_id else None,
+                reason=(
+                    f"Escalated to team (lead={lead_id}) after SLA breach "
+                    f"(level {ticket.escalation_level}); "
+                    f"previous assignee={old_assignee}"
+                ),
             ))
 
             logger.info(
-                "escalated: ticket_id=%s level=%s → lead=%s (assignee's lead)",
-                ticket.ticket_id, ticket.escalation_level, lead_id,
+                "escalated: ticket_id=%s level=%s → team=%s (lead=%s notified; "
+                "assignee cleared for team self-claim)",
+                ticket.ticket_id, ticket.escalation_level,
+                ticket.team_id, lead_id,
             )
 
         else:
-            # Level 2+ — ticket is already with the lead, notify again
+            # ── Level 2+: already in lead's team queue, notify again ──────────
             logger.warning(
                 "escalated: ticket_id=%s level=%s — lead=%s re-notified, "
-                "manual intervention required",
-                ticket.ticket_id, ticket.escalation_level, lead_id,
+                "team=%s, manual intervention required.",
+                ticket.ticket_id, ticket.escalation_level,
+                lead_id, ticket.team_id,
             )
 
-        # Notify the lead — always both email + SSE (operational alert)
+        # ── Notify the lead (always email + SSE) ─────────────────────────────
         try:
             customer = await self._auth.get_user(ticket.customer_id)
             customer_name = customer.email.split("@")[0]
@@ -523,6 +562,8 @@ class TicketService:
         current_user_id: str,
         current_user_role: str,
     ):
+        now = datetime.now(timezone.utc)
+
         saved = await self._comment_repo.add(TicketComment(
             ticket_id=comment.ticket_id,
             author_id=current_user_id,
@@ -540,6 +581,30 @@ class TicketService:
         ticket = await self._ticket_repo.get_by_id(comment.ticket_id, eager=False)
         if not ticket:
             return saved
+
+        # ── Act on SLA hold / resume flags ────────────────────────────────────
+        if comment.triggers_hold and ticket.status == TicketStatus.IN_PROGRESS:
+            self._sla_svc.pause_resolution_sla(ticket, now)
+            ticket.status = TicketStatus.ON_HOLD
+            ticket = await self._ticket_repo.save(ticket)
+            await self._record_transition(
+                ticket,
+                from_status=TicketStatus.IN_PROGRESS,
+                to_status=TicketStatus.ON_HOLD,
+                changed_by=current_user_id,
+                reason=f"SLA paused via comment: {comment.body[:80]}",
+            )
+        elif comment.triggers_resume and ticket.status == TicketStatus.ON_HOLD:
+            self._sla_svc.resume_resolution_sla(ticket, now)
+            ticket.status = TicketStatus.IN_PROGRESS
+            ticket = await self._ticket_repo.save(ticket)
+            await self._record_transition(
+                ticket,
+                from_status=TicketStatus.ON_HOLD,
+                to_status=TicketStatus.IN_PROGRESS,
+                changed_by=current_user_id,
+                reason=f"SLA resumed via comment: {comment.body[:80]}",
+            )
 
         role = UserRole(current_user_role)
 

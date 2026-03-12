@@ -1,13 +1,13 @@
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from src.api.rest.dependencies import (
     CurrentUserID,
     CurrentUserRole,
     TicketServiceDep,
 )
-from src.constants.enum import Priority, Severity, TicketStatus, UserRole
+from src.constants.enum import Priority, Severity, TicketStatus
 
 from src.schemas.common_schema import PaginatedResponse
 from src.schemas.ticket_schema import (
@@ -25,6 +25,21 @@ from src.data.models.postgres.ticket_comment import TicketComment
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
+def _enqueue_auto_assign(ticket_id: int, ticket_title: str) -> None:
+    """
+    Thin wrapper so BackgroundTasks can call this after the HTTP response
+    is sent (i.e. after get_db() has committed the transaction).
+    By the time this runs the ticket row is guaranteed to be visible to
+    the Celery worker's independent DB session.
+    """
+    import logging
+    from src.core.tasks.assignment_task import auto_assign_ticket
+    auto_assign_ticket.delay(ticket_id=ticket_id, ticket_title=ticket_title)
+    logging.getLogger(__name__).info(
+        "auto_assign_ticket: enqueued post-commit for ticket_id=%s", ticket_id
+    )
+
+
 @router.post(
     "",
     response_model=TicketDetailResponse,
@@ -33,10 +48,17 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 )
 async def create_ticket(
     payload: TicketCreateRequest,
+    background_tasks: BackgroundTasks,
     svc: TicketServiceDep,
     user_id: CurrentUserID,
 ):
     ticket = await svc.create_ticket(payload, current_user_id=user_id)
+    # Enqueue AFTER this handler returns — get_db() commits the session
+    # in its finally block before BackgroundTasks run, so the worker is
+    # guaranteed to find the ticket already committed.
+    background_tasks.add_task(
+        _enqueue_auto_assign, ticket.ticket_id, ticket.title
+    )
     return TicketDetailResponse.model_validate(ticket)
 
 
@@ -60,6 +82,9 @@ async def get_my_tickets(
     severity: Optional[Severity] = Query(default=None),
     priority: Optional[Priority] = Query(default=None),
     is_breached: Optional[bool] = Query(default=None),
+    is_escalated: Optional[bool] = Query(default=None),
+    is_unassigned: Optional[bool] = Query(default=None),
+    queue_type: Optional[str] = Query(default=None),
 ):
     filters = TicketListFilters(
         page=page,
@@ -68,6 +93,9 @@ async def get_my_tickets(
         severity=severity,
         priority=priority,
         is_breached=is_breached,
+        is_escalated=is_escalated,
+        is_unassigned=is_unassigned,
+        queue_type=queue_type,
     )
     total, tickets = await svc.get_my_tickets(
         current_user_id=user_id,
@@ -98,8 +126,12 @@ async def list_all_tickets(
     priority: Optional[Priority] = Query(default=None),
     is_breached: Optional[bool] = Query(default=None),
     is_escalated: Optional[bool] = Query(default=None),
+    is_unassigned: Optional[bool] = Query(default=None),
     customer_id: Optional[str] = Query(default=None),
     assignee_id: Optional[str] = Query(default=None),
+    team_id: Optional[str] = Query(default=None),
+    queue_type: Optional[str] = Query(default=None),
+    routing_status: Optional[str] = Query(default=None),
 ):
     filters = TicketListFilters(
         page=page,
@@ -109,8 +141,12 @@ async def list_all_tickets(
         priority=priority,
         is_breached=is_breached,
         is_escalated=is_escalated,
+        is_unassigned=is_unassigned,
         customer_id=customer_id,
         assignee_id=assignee_id,
+        team_id=team_id,
+        queue_type=queue_type,
+        routing_status=routing_status,
     )
     total, tickets = await svc.get_all_tickets(
         filters=filters,

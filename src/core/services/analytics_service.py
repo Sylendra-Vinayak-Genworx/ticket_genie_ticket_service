@@ -8,6 +8,7 @@ from src.constants.enum import UserRole
 from src.core.exceptions.base import InsufficientPermissionsError
 from src.data.repositories.agent_repository import AgentRepository
 from src.data.repositories.analytics_repository import AnalyticsRepository
+from typing import Optional
 from src.schemas.analytics_schema import (
     AdminDashboard,
     AgentPerformance,
@@ -33,6 +34,7 @@ class AnalyticsService:
         self,
         filters: AnalyticsFilters,
         current_user_role: str,
+        assignee_ids: Optional[list[str]] = None,
     ) -> AdminDashboard:
         role = UserRole(current_user_role)
         if role not in (UserRole.LEAD, UserRole.ADMIN):
@@ -43,6 +45,7 @@ class AnalyticsService:
             date_to=filters.date_to,
             product=filters.product,
             customer_tier_id=filters.customer_tier_id,
+            assignee_ids=assignee_ids,
         )
 
         summary_data = await self._analytics_repo.get_ticket_summary(**kw)
@@ -50,6 +53,7 @@ class AnalyticsService:
         sla_data = await self._analytics_repo.get_sla_compliance(**kw)
         agent_rows = await self._analytics_repo.get_agent_stats(
             date_from=filters.date_from, date_to=filters.date_to,
+            assignee_ids=assignee_ids,
         )
 
         # enrich agent rows with display_name
@@ -78,6 +82,7 @@ class AnalyticsService:
         self,
         filters: AnalyticsFilters,
         current_user_role: str,
+        assignee_ids: Optional[list[str]] = None,
     ) -> SLAComplianceReport:
         role = UserRole(current_user_role)
         if role not in (UserRole.LEAD, UserRole.ADMIN):
@@ -88,6 +93,7 @@ class AnalyticsService:
             date_to=filters.date_to,
             product=filters.product,
             customer_tier_id=filters.customer_tier_id,
+            assignee_ids=assignee_ids,
         )
         return SLAComplianceReport(**data)
 

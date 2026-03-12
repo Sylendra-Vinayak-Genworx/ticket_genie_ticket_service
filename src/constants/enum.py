@@ -81,6 +81,7 @@ class QueueType(str, enum.Enum):
 class RoutingStatus(str, enum.Enum):
     SUCCESS   = "SUCCESS"     
     AI_FAILED = "AI_FAILED" 
+    ESCALATED = "ESCALATED"
 
 
 class CustomerTier(str, enum.Enum):

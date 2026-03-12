@@ -1,10 +1,8 @@
-
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.services.notification.email_service import EmailNotificationService
@@ -21,7 +19,6 @@ from src.schemas.notification_schema import (
     TicketCreatedRequest,
 )
 from src.data.clients.auth_client import AuthServiceClient, UserDTO
-from src.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -181,48 +178,16 @@ class NotificationManager:
         """
         Fetch user from Auth Service.
         Returns None on failure so the caller can skip gracefully.
-        Also adds preferred_mode_of_contact from the /by-email enrichment
-        if UserDTO doesn't already carry it.
+        UserDTO already carries preferred_mode_of_contact with a safe default.
         """
         try:
-            user = await auth_client.get_user(user_id)
-            # If preferred_mode_of_contact is not yet on UserDTO, fetch it
-            if not hasattr(user, "preferred_mode_of_contact") or user.preferred_mode_of_contact is None:
-                user = await _enrich_contact_mode(user, auth_client)
-            return user
+            return await auth_client.get_user(user_id)
         except Exception as exc:
             logger.warning(
                 "notification_manager: could not resolve user_id=%s: %s",
                 user_id, exc,
             )
             return None
-
-
-async def _enrich_contact_mode(
-    user: UserDTO, auth_client: AuthServiceClient
-) -> UserDTO:
-    """
-    Fetch preferred_mode_of_contact via GET /auth/users/by-email.
-    Falls back to the original UserDTO on any error.
-    """
-    settings = get_settings()
-    base = settings.auth_service_url.rstrip("/")
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            resp = await client.get(
-                f"{base}/api/v1/auth/users/by-email",
-                params={"email": user.email},
-            )
-        if resp.status_code == 200:
-            data = resp.json()
-            # Patch the field onto the existing DTO
-            object.__setattr__(
-                user, "preferred_mode_of_contact",
-                data.get("preferred_mode_of_contact", _MODE_EMAIL),
-            )
-    except Exception:
-        pass
-    return user
 
 
 # Module-level singleton

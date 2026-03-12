@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from  uuid import UUID
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from src.config.settings import get_settings
 from src.core.exceptions.base import (
@@ -16,20 +16,17 @@ logger = logging.getLogger(__name__)
 
 class UserDTO(BaseModel):
     """Minimal user payload returned by Auth Service /api/v1/auth/users/{uuid}"""
-    id: str                              
+    model_config = ConfigDict(json_encoders={UUID: str})
+
+    id: str
     email: str
-    role: str                           
+    role: str
     is_active: bool = True
     is_verified: bool = False
-    preferred_mode_of_contact: str = "email"   
+    preferred_mode_of_contact: str = "email"
     customer_tier_id: Optional[int] = None
     lead_id: Optional[str] = None
     team_id: Optional[str] = None
-    
-    class config:
-        json_encoders={
-            UUID : str
-        }
 
     
 

@@ -30,6 +30,7 @@ class AnalyticsRepository:
         date_to: Optional[datetime] = None,
         product: Optional[str] = None,
         customer_tier_id: Optional[int] = None,
+        assignee_ids: Optional[list] = None,
     ):
         if date_from:
             stmt = stmt.where(Ticket.created_at >= date_from)
@@ -39,6 +40,8 @@ class AnalyticsRepository:
             stmt = stmt.where(Ticket.product == product)
         if customer_tier_id:
             stmt = stmt.where(Ticket.customer_tier_id == customer_tier_id)
+        if assignee_ids:
+            stmt = stmt.where(Ticket.assignee_id.in_(assignee_ids))
         return stmt
 
     # ── summary counts ────────────────────────────────────────────────────────
@@ -49,6 +52,7 @@ class AnalyticsRepository:
         date_to: Optional[datetime] = None,
         product: Optional[str] = None,
         customer_tier_id: Optional[int] = None,
+        assignee_ids: Optional[list] = None,
     ) -> dict:
         base = select(
             func.count(Ticket.ticket_id).label("total"),
@@ -60,7 +64,7 @@ class AnalyticsRepository:
             func.count(case((Ticket.response_sla_breached_at.isnot(None), 1))).label("breached"),
             func.count(case((Ticket.escalation_level > 0, 1))).label("escalated"),
         )
-        base = self._apply_date_filters(base, date_from, date_to, product, customer_tier_id)
+        base = self._apply_date_filters(base, date_from, date_to, product, customer_tier_id, assignee_ids)
         row = (await self.db.execute(base)).one()
         return {
             "total_tickets": row.total,
@@ -82,9 +86,10 @@ class AnalyticsRepository:
         date_to: Optional[datetime] = None,
         product: Optional[str] = None,
         customer_tier_id: Optional[int] = None,
+        assignee_ids: Optional[list] = None,
     ) -> list[dict]:
         stmt = select(column, func.count(Ticket.ticket_id).label("cnt")).group_by(column)
-        stmt = self._apply_date_filters(stmt, date_from, date_to, product, customer_tier_id)
+        stmt = self._apply_date_filters(stmt, date_from, date_to, product, customer_tier_id, assignee_ids)
         rows = (await self.db.execute(stmt)).all()
         return [{"label": str(r[0].value if hasattr(r[0], "value") else r[0]), "count": r.cnt} for r in rows]
 
@@ -94,8 +99,9 @@ class AnalyticsRepository:
         date_to: Optional[datetime] = None,
         product: Optional[str] = None,
         customer_tier_id: Optional[int] = None,
+        assignee_ids: Optional[list] = None,
     ) -> dict:
-        kw = dict(date_from=date_from, date_to=date_to, product=product, customer_tier_id=customer_tier_id)
+        kw = dict(date_from=date_from, date_to=date_to, product=product, customer_tier_id=customer_tier_id, assignee_ids=assignee_ids)
         return {
             "by_status": await self._count_by(Ticket.status, **kw),
             "by_severity": await self._count_by(Ticket.severity, **kw),
@@ -109,6 +115,7 @@ class AnalyticsRepository:
         self,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        assignee_ids: Optional[list] = None,
     ) -> list[dict]:
         """Per-assignee aggregates: total assigned, resolved, breached, avg resolution."""
         stmt = (
@@ -134,6 +141,8 @@ class AnalyticsRepository:
             .where(Ticket.assignee_id.isnot(None))
             .group_by(Ticket.assignee_id)
         )
+        if assignee_ids:
+            stmt = stmt.where(Ticket.assignee_id.in_(assignee_ids))
         if date_from:
             stmt = stmt.where(Ticket.created_at >= date_from)
         if date_to:
@@ -158,6 +167,7 @@ class AnalyticsRepository:
         date_to: Optional[datetime] = None,
         product: Optional[str] = None,
         customer_tier_id: Optional[int] = None,
+        assignee_ids: Optional[list] = None,
     ) -> dict:
         stmt = select(
             func.count(Ticket.ticket_id).label("total"),
