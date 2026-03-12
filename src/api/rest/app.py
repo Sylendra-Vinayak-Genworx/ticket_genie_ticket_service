@@ -19,6 +19,7 @@ from src.data.models.postgres import Base
 from src.observability.logging.logger import setup_logging
 from src.api.middleware.jwt_middleware import JWTMiddleware
 from src.api.rest.routes.notification_routes import router as  notification_router
+from src.api.rest.routes.tier_routes import router as tier_router
 import src.data.models.postgres
 
 
@@ -55,4 +56,5 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(area_of_concern_router)
     app.include_router(notification_router)
+    app.include_router(tier_router)
     return app

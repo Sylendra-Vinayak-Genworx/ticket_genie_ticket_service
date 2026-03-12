@@ -343,9 +343,42 @@ class TicketRepository:
         if filters.assignee_ids:
             stmt = stmt.where(Ticket.assignee_id.in_(filters.assignee_ids))
         if filters.is_breached is not None:
-            stmt = stmt.where(Ticket.resolution_sla_breached_at!=None and Ticket.response_sla_breached_at!=None == filters.is_breached)
+            if filters.is_breached:
+                stmt = stmt.where(
+                    (Ticket.resolution_sla_breached_at.isnot(None)) | 
+                    (Ticket.response_sla_breached_at.isnot(None))
+                )
+            else:
+                stmt = stmt.where(
+                    Ticket.resolution_sla_breached_at.is_(None),
+                    Ticket.response_sla_breached_at.is_(None)
+                )
         if filters.is_escalated is not None:
-            stmt = stmt.where((Ticket.escalation_level>0) == filters.is_escalated)
+            stmt = stmt.where(Ticket.is_escalated == filters.is_escalated)
+        if filters.is_unassigned is not None:
+            if filters.is_unassigned:
+                stmt = stmt.where(
+                    Ticket.assignee_id.is_(None),
+                    Ticket.status.not_in([TicketStatus.RESOLVED, TicketStatus.CLOSED]),
+                )
+            else:
+                stmt = stmt.where(Ticket.assignee_id.isnot(None))
+        if filters.team_id:
+            stmt = stmt.where(Ticket.team_id == filters.team_id)
+        if filters.queue_type:
+            # Note: QueueType.OPEN represents the unassigned Open Queue
+            if filters.queue_type == QueueType.OPEN.value:
+                stmt = stmt.where(
+                    Ticket.queue_type == QueueType.OPEN.value,
+                    Ticket.assignee_id.is_(None),
+                    Ticket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS]),
+                    Ticket.routing_status == RoutingStatus.AI_FAILED.value,
+                    Ticket.escalation_level == 0
+                )
+            else:
+                stmt = stmt.where(Ticket.queue_type == filters.queue_type)
+        if filters.routing_status:
+            stmt = stmt.where(Ticket.routing_status == filters.routing_status)
         return stmt
 
     async def _paginate(
@@ -365,7 +398,8 @@ class TicketRepository:
     async def get_ticket_count_for_leads(self, lead_ids: list[str]) -> dict[str, int]:
         stmt = (
             select(Ticket.assignee_id, func.count(Ticket.ticket_id))
-            .where(Ticket.assignee_id.in_(lead_ids) and Ticket.status.not_in([TicketStatus.CLOSED,TicketStatus.ACKNOWLEDGED,TicketStatus.NEW])) 
+            .where(Ticket.assignee_id.in_(lead_ids))
+            .where(Ticket.status.not_in([TicketStatus.CLOSED, TicketStatus.ACKNOWLEDGED, TicketStatus.NEW]))
             .group_by(Ticket.assignee_id)
         )
 

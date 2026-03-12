@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.constants.enum import (
     EventType, Priority, Severity, TicketSource, TicketStatus, UserRole,
+    QueueType, RoutingStatus
 )
 from src.schemas.notification_schema import (
     
@@ -182,6 +183,11 @@ class TicketService:
             resolution_sla_deadline_minutes=sla_config.resolution_deadline_minutes,
             escalation_level=0,
             auto_closed=False,
+            # Initialize explicitly before routing
+            team_id=None,
+            assignee_id=None,
+            queue_type=QueueType.DIRECT.value,
+            routing_status=RoutingStatus.SUCCESS.value,
         )
 
         self._sla_svc.start_response_sla(ticket, now)
@@ -245,7 +251,7 @@ class TicketService:
         old_status = ticket.status
         new_status = payload.new_status
 
-        if UserRole(current_user_role) == UserRole.CUSTOMER:
+        if UserRole(current_user_role) == UserRole.CUSTOMER and old_status != TicketStatus.RESOLVED:
             raise InsufficientPermissionsError("Customers cannot update ticket status.")
 
         allowed = ALLOWED_TRANSITIONS.get(old_status, [])
@@ -335,9 +341,11 @@ class TicketService:
         # intentionally left NULL so agents can self-claim from the team queue.
         if payload.assignee_id:
             ticket.assignee_id = payload.assignee_id
+            ticket.queue_type = QueueType.DIRECT.value
+            ticket.routing_status = RoutingStatus.SUCCESS.value
 
         # team_id: prefer the explicit argument, then the payload, then keep existing
-        resolved_team_id = team_id or payload.team_id
+        resolved_team_id = team_id
         if resolved_team_id is not None:
             ticket.team_id = resolved_team_id
 
@@ -462,6 +470,8 @@ class TicketService:
             new_value=str(ticket.escalation_level),
             reason=reason,
         ))
+
+        ticket.routing_status = RoutingStatus.ESCALATED.value
 
         if not lead_id:
             logger.warning(

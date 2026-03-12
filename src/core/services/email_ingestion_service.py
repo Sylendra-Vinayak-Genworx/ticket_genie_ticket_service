@@ -76,26 +76,27 @@ class EmailIngestService:
 
     # ── Entry point ───────────────────────────────────────────────────────────
 
-    async def process(self, payload: EmailPayload) -> None:
+    async def process(self, payload: EmailPayload) -> tuple[int, str] | None:
         now = datetime.now(timezone.utc)
 
         # 1. Drop OOO / delivery receipts
         if payload.is_auto_reply:
             logger.info("email_ingest: dropping auto-reply message_id=%s", payload.message_id)
-            return
+            return None
 
         # 2. Idempotency — skip if already processed
         if await self._thread_repo.get_by_message_id(payload.message_id):
             logger.info("email_ingest: already processed message_id=%s — skipping", payload.message_id)
-            return
+            return None
 
         # 3. Route
         try:
             ticket_id = await self._find_existing_ticket(payload)
             if ticket_id:
                 await self._add_reply_comment(payload, ticket_id, now)
+                return None
             else:
-                await self._create_new_ticket(payload, now)
+                return await self._create_new_ticket(payload, now)
         except Exception as exc:
             logger.exception("email_ingest: failed message_id=%s: %s", payload.message_id, exc)
             await self._save_failed_thread(payload, now, str(exc))
@@ -128,7 +129,7 @@ class EmailIngestService:
 
     # ── New ticket ────────────────────────────────────────────────────────────
 
-    async def _create_new_ticket(self, payload: EmailPayload, now: datetime) -> None:
+    async def _create_new_ticket(self, payload: EmailPayload, now: datetime) -> tuple[int, str]:
         customer = await self._resolve_customer(payload.sender_email)
 
         ticket = await self._ticket_svc.create_ticket(
@@ -160,6 +161,7 @@ class EmailIngestService:
             "email_ingest: created ticket_id=%s number=%s from=%s",
             ticket.ticket_id, ticket.ticket_number, payload.sender_email,
         )
+        return ticket.ticket_id, ticket.title
 
     # ── Reply ─────────────────────────────────────────────────────────────────
 

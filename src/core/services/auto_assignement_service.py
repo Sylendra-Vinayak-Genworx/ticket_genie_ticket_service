@@ -77,7 +77,7 @@ class AutoAssignmentService:
         )
         await self._ticket_svc.assign_ticket(
             ticket_id=ticket_id,
-            payload=TicketAssignRequest.for_agent(best.assignee_id),
+            payload=TicketAssignRequest(assignee_id=best.assignee_id),
             current_user_id=SYSTEM_ASSIGNER_ID,
             current_user_role=SYSTEM_ASSIGNER_ROLE,
             team_id=best.team_id,
@@ -113,7 +113,7 @@ class AutoAssignmentService:
         )
         await self._ticket_svc.assign_ticket(
             ticket_id=ticket_id,
-            payload=TicketAssignRequest.for_agent(agent_id),
+            payload=TicketAssignRequest(assignee_id=agent_id),
             current_user_id=SYSTEM_ASSIGNER_ID,
             current_user_role=SYSTEM_ASSIGNER_ROLE,
             team_id=team_id,

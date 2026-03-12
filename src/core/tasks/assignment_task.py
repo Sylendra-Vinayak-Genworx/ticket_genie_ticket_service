@@ -167,6 +167,11 @@ async def _fallback_to_lead(ticket_id: int) -> None:
                 "[ticket=%s] failed to resolve lead — moving to OPEN queue",
                 ticket_id,
             )
+            # Transaction might be aborted by Postgres if query failed. Rollback and refetch.
+            await session.rollback()
+            ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+            if not ticket:
+                return
 
         ticket.routing_status = RoutingStatus.AI_FAILED.value
         ticket.fallback_assigned_at = now
@@ -242,6 +247,7 @@ async def _move_to_open_queue(ticket_id: int) -> None:
         ticket.assignee_id = None
         ticket.team_id = None
         ticket.queue_type = QueueType.OPEN.value
+        ticket.routing_status = RoutingStatus.AI_FAILED.value
         ticket.status = TicketStatus.OPEN
 
         await ticket_repo.save(ticket)
@@ -303,7 +309,14 @@ def auto_assign_ticket(self, ticket_id: int, ticket_title: str):
             run_async(_fallback_to_lead(ticket_id))
         except Exception:
             logger.exception("[ticket=%s] Fallback also failed", ticket_id)
-        raise self.retry(exc=exc, countdown=30 * 2 ** self.request.retries)
+            raise self.retry(exc=exc, countdown=30 * 2 ** self.request.retries)
+        
+        # Fallback executed successfully, so we do NOT retry the whole task
+        return {
+            "ticket_id": ticket_id,
+            "routing_status": RoutingStatus.AI_FAILED.value,
+            "message": "Score routing raised exception — routed to lead team queue via fallback",
+        }
 
     if success:
         return {

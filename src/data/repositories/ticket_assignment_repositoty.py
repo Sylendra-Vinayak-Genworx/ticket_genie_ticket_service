@@ -136,17 +136,18 @@ class TicketAssignmentRepository:
         if not lead_ids:
             return None
 
-        placeholders = ", ".join(f":lid_{i}" for i in range(len(lead_ids)))
-        params: dict = {f"lid_{i}": lid for i, lid in enumerate(lead_ids)}
-        params["team_id"] = team_id
+        # Fix parameter binding for asyncpg: use = ANY(:lead_ids) for lists,
+        # but SQLAlchemy text() mapping prefers expanding IN or ANY.
+        # Actually in SQLAlchemy + asyncpg, we can just use ANY(:lead_ids) with a list!
+        params: dict = {"lead_ids": lead_ids, "team_id": team_id}
 
         sql = text(
-            f"""
+            """
             SELECT assignee_id, COUNT(*) AS workload
             FROM tickets
             WHERE status IN ('OPEN', 'IN_PROGRESS')
-              AND assignee_id IN ({placeholders})
-            GROUP BY assignee_id
+              AND assignee_id = ANY(:lead_ids)
+            GROUP BY assignee_id, team_id
             ORDER BY
                 CASE WHEN team_id = :team_id THEN 0 ELSE 1 END,
                 workload ASC

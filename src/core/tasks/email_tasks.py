@@ -78,7 +78,14 @@ def poll_mailbox(self):
 
 async def _ingest_one(payload: EmailPayload) -> None:
     """Open a fresh DB session, process one email, commit."""
+    created_ticket = None
     async with AsyncSessionFactory() as session:
         svc = EmailIngestService(db=session, auth_client=auth_client)
-        await svc.process(payload)
+        created_ticket = await svc.process(payload)
         await session.commit()
+    
+    if created_ticket:
+        from src.core.tasks.assignment_task import auto_assign_ticket
+        ticket_id, ticket_title = created_ticket
+        auto_assign_ticket.delay(ticket_id=ticket_id, ticket_title=ticket_title)
+        logger.info("email_tasks: enqueued auto_assign_ticket for ticket_id=%s", ticket_id)
