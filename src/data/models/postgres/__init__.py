@@ -13,9 +13,11 @@ from src.data.models.postgres.agent_profile import AgentProfile             # no
 from src.data.models.postgres.email_thread import EmailThread, EmailDirection    # noqa: F401
 from src.data.models.postgres.customer_tier import CustomerTier             # noqa: F401
 from src.data.models.postgres.area_of_concern import AreaOfConcern         # noqa: F401
+from src.data.models.postgres.agent_skill import AgentSkill                 # noqa: F401
 
 __all__ = [
     "Base",
+    "AgentSkill",
     "SLAPolicy",
     "AreaOfConcern",
     "SLA",

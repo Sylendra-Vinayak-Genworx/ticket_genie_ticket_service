@@ -20,8 +20,8 @@ from src.observability.logging.logger import setup_logging
 from src.api.middleware.jwt_middleware import JWTMiddleware
 from src.api.rest.routes.notification_routes import router as  notification_router
 from src.api.rest.routes.tier_routes import router as tier_router
+from src.api.rest.routes.agent_skills import router as agent_skills_router
 import src.data.models.postgres
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -57,4 +57,5 @@ def create_app() -> FastAPI:
     app.include_router(area_of_concern_router)
     app.include_router(notification_router)
     app.include_router(tier_router)
+    app.include_router(agent_skills_router)
     return app
