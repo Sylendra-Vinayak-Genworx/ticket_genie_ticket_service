@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _MODEL_NAME = "llama-3.3-70b-versatile"
 
 
-# ── Data types ────────────────────────────────────────────────────────────────
+
 
 class TicketContext(BaseModel):
     """All context needed to generate any kind of draft reply."""
