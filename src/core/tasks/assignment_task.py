@@ -254,6 +254,12 @@ async def _move_to_open_queue(ticket_id: int) -> None:
             logger.warning("[ticket=%s] _move_to_open_queue: ticket not found", ticket_id)
             return
 
+        # Capture current status before mutating — used in the audit event.
+        old_status = (
+            ticket.status.value
+            if hasattr(ticket.status, "value")
+            else str(ticket.status)
+        )
         old_team = ticket.team_id
 
         ticket.assignee_id = None
@@ -269,7 +275,7 @@ async def _move_to_open_queue(ticket_id: int) -> None:
             triggered_by_user_id=None,
             event_type=EventType.STATUS_CHANGED,
             field_name="status",
-            old_value=TicketStatus.ACKNOWLEDGED.value,
+            old_value=old_status,        # real status, not hardcoded ACKNOWLEDGED
             new_value=TicketStatus.OPEN.value,
             reason=(
                 f"Fallback team '{old_team}' did not self-claim within the timeout window "

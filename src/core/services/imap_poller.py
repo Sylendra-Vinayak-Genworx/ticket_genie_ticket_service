@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import email
@@ -14,7 +13,6 @@ from src.config.settings import get_settings
 from src.schemas.email_schema import EmailPayload
 
 logger = logging.getLogger(__name__)
-
 
 
 def _decode(raw: str | None) -> str:
@@ -48,25 +46,47 @@ def _is_auto_reply(msg: email.message.Message) -> bool:
 
 
 def _plain_text(msg: email.message.Message) -> str | None:
-    """Return the first text/plain part of the message."""
+    """Return the first text/plain part of the message with normalised line endings."""
+    raw_bytes = None
+    charset = "utf-8"
+
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                raw = part.get_payload(decode=True)
+                raw_bytes = part.get_payload(decode=True)
                 charset = part.get_content_charset() or "utf-8"
-                return raw.decode(charset, errors="replace") if raw else None
+                break
     else:
         if msg.get_content_type() == "text/plain":
-            raw = msg.get_payload(decode=True)
+            raw_bytes = msg.get_payload(decode=True)
             charset = msg.get_content_charset() or "utf-8"
-            return raw.decode(charset, errors="replace") if raw else None
-    return None
+
+    if not raw_bytes:
+        return None
+
+    text = raw_bytes.decode(charset, errors="replace")
+    # Normalise \r\n → \n so quote stripping and display work correctly
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _parse_references(raw: str | None) -> list[str]:
     if not raw:
         return []
     return [r.strip() for r in raw.split() if r.strip()]
+
+
+def _normalise_message_id(raw: str) -> str:
+    """
+    Wrap in angle brackets if missing, then lowercase the whole thing.
+    Message-IDs are case-insensitive in practice — many mail servers
+    mangle the case on replies, which breaks thread matching without this.
+    """
+    mid = raw.strip()
+    if not mid.startswith("<"):
+        mid = f"<{mid}"
+    if not mid.endswith(">"):
+        mid = f"{mid}>"
+    return mid.lower()
 
 
 # ── Poller ─────────────────────────────────────────────────────────────────────
@@ -88,6 +108,11 @@ class IMAPPoller:
         Yield one EmailPayload per UNSEEN message.
         Marks each message SEEN before yielding.
         Skips auto-replies silently.
+
+        All message_id / in_reply_to / references values are normalised to
+        lowercase so that thread matching in EmailThreadRepository is
+        case-insensitive. RFC 2822 message-IDs are technically case-sensitive
+        but many mail servers (Gmail included) mangle the case on replies.
         """
         conn = self._connect()
         try:
@@ -115,21 +140,37 @@ class IMAPPoller:
                         logger.debug("imap_poller: uid=%s skipped (auto-reply)", uid)
                         continue
 
-                    raw_message_id = _decode(msg.get("Message-ID", "")).strip("<>")
+                    # ── Message-ID ─────────────────────────────────────────
+                    raw_message_id = _decode(msg.get("Message-ID", "")).strip("<>").strip()
                     if not raw_message_id:
-                        raw_message_id = f"synthetic-{uid.decode()}-{int(datetime.now().timestamp())}"
+                        raw_message_id = (
+                            f"synthetic-{uid.decode()}-{int(datetime.now().timestamp())}"
+                        )
                         logger.warning(
                             "imap_poller: uid=%s has no Message-ID — using synthetic: %s",
                             uid, raw_message_id,
                         )
 
+                    # Normalise: wrap in <>, lowercase — stored this way in DB
+                    message_id = _normalise_message_id(raw_message_id)
+
+                    # ── In-Reply-To ────────────────────────────────────────
                     in_reply_to_raw = _decode(msg.get("In-Reply-To", "")).strip()
-                    in_reply_to = in_reply_to_raw if in_reply_to_raw else None
+                    in_reply_to = (
+                        _normalise_message_id(in_reply_to_raw)
+                        if in_reply_to_raw else None
+                    )
+
+                    # ── References ─────────────────────────────────────────
+                    references = [
+                        _normalise_message_id(r)
+                        for r in _parse_references(msg.get("References"))
+                    ]
 
                     yield EmailPayload(
-                        message_id=f"<{raw_message_id}>",
+                        message_id=message_id,
                         in_reply_to=in_reply_to,
-                        references=_parse_references(msg.get("References")),
+                        references=references,
                         subject=_decode(msg.get("Subject", "(no subject)")),
                         sender_email=_bare_address(_decode(msg.get("From", ""))),
                         body_text=_plain_text(msg),

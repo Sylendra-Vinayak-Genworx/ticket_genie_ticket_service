@@ -1,4 +1,3 @@
-
 from datetime import datetime
 from typing import Optional
 
@@ -18,9 +17,10 @@ class EmailThreadRepository:
         """
         Idempotency check.
         Returns the row if this exact Message-ID was already ingested.
+        Normalises to lowercase — message_ids are stored lowercase by the poller.
         """
         result = await self.db.execute(
-            select(EmailThread).where(EmailThread.message_id == message_id)
+            select(EmailThread).where(EmailThread.message_id == message_id.lower())
         )
         return result.scalar_one_or_none()
 
@@ -29,9 +29,10 @@ class EmailThreadRepository:
         Thread linkage.
         Finds the stored email whose message_id matches the given In-Reply-To
         value so we can retrieve the linked ticket_id.
+        Normalises to lowercase — both sides stored lowercase by the poller.
         """
         result = await self.db.execute(
-            select(EmailThread).where(EmailThread.message_id == in_reply_to)
+            select(EmailThread).where(EmailThread.message_id == in_reply_to.lower())
         )
         return result.scalar_one_or_none()
 

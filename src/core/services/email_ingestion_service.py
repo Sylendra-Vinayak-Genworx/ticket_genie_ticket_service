@@ -34,7 +34,7 @@ Customer resolution
 Error handling
 ──────────────
   Any exception is caught, logged, and a failed EmailThread row is written
-  (ticket_id=0 sentinel) so failures are visible in the DB and can be retried.
+  with ticket_id=NULL so failures are visible in the DB and can be retried.
   The exception is then re-raised so the Celery task can decide on retry.
 """
 
@@ -49,14 +49,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import get_settings
 from src.constants.enum import Environment, TicketSource, UserRole
+from src.core.services.notification.manager import notification_manager
 from src.core.services.ticket_service import TicketService
 from src.data.clients.auth_client import AuthServiceClient, UserDTO
+from src.data.clients.postgres_client import AsyncSessionFactory
 from src.data.models.postgres.email_thread import EmailDirection, EmailThread
 from src.data.models.postgres.ticket_comment import TicketComment
+from src.data.repositories.area_of_concern_repository import AreaOfConcernRepository
 from src.data.repositories.email_thread_repository import EmailThreadRepository
 from src.data.repositories.ticket_comment_repository import TicketCommentRepository
 from src.data.repositories.ticket_repository import TicketRepository
 from src.schemas.email_schema import EmailPayload
+from src.schemas.notification_schema import TicketCreatedRequest
 from src.schemas.ticket_schema import TicketCreateRequest
 
 logger = logging.getLogger(__name__)
@@ -72,6 +76,7 @@ class EmailIngestService:
         self._thread_repo = EmailThreadRepository(db)
         self._ticket_repo = TicketRepository(db)
         self._comment_repo = TicketCommentRepository(db)
+        self._area_repo = AreaOfConcernRepository(db)
         self._ticket_svc = TicketService(db, auth_client)
 
     # ── Entry point ───────────────────────────────────────────────────────────
@@ -132,14 +137,21 @@ class EmailIngestService:
     async def _create_new_ticket(self, payload: EmailPayload, now: datetime) -> tuple[int, str]:
         customer = await self._resolve_customer(payload.sender_email)
 
+        # Resolve area_of_concern by matching subject+body against known areas.
+        # This enables score-based assignment for email tickets (same as UI tickets).
+        # Returns None if no match — falls through to least-loaded agent globally.
+        area_id = await self._resolve_area(payload.subject, payload.body_text or "")
+
+        title = self._clean_subject(payload.subject)
+
         ticket = await self._ticket_svc.create_ticket(
             payload=TicketCreateRequest(
-                title=self._clean_subject(payload.subject),
+                title=title,
                 description=payload.body_text or payload.subject,
-                product="Unknown",
+                product="Email",
                 environment=Environment.PROD,
                 source=TicketSource.EMAIL,
-                area_of_concern=None,
+                area_of_concern=area_id,
                 attachments=[],
             ),
             current_user_id=customer.id,
@@ -157,9 +169,31 @@ class EmailIngestService:
             processed_at=now,
         ))
 
+        # Use a FRESH session for the notification — self._db is still
+        # mid-transaction (ticket + thread unflushed). Sharing the session
+        # causes asyncpg to time out and corrupts the transaction.
+        try:
+            async with AsyncSessionFactory() as notif_session:
+                await notification_manager.send(
+                    request=TicketCreatedRequest(
+                        ticket_id=ticket.ticket_id,
+                        ticket_number=ticket.ticket_number,
+                        ticket_title=ticket.title,
+                        customer_id=customer.id,
+                    ),
+                    db=notif_session,
+                    auth_client=self._auth,
+                )
+                await notif_session.commit()
+        except Exception:
+            logger.exception(
+                "email_ingest: notification failed for ticket_id=%s — ticket still created",
+                ticket.ticket_id,
+            )
+
         logger.info(
-            "email_ingest: created ticket_id=%s number=%s from=%s",
-            ticket.ticket_id, ticket.ticket_number, payload.sender_email,
+            "email_ingest: created ticket_id=%s number=%s from=%s area=%s",
+            ticket.ticket_id, ticket.ticket_number, payload.sender_email, area_id,
         )
         return ticket.ticket_id, ticket.title
 
@@ -170,11 +204,14 @@ class EmailIngestService:
     ) -> None:
         customer = await self._resolve_customer(payload.sender_email)
 
+        # Strip quoted original email — store only what the customer wrote.
+        clean_body = self._strip_reply_quotes(payload.body_text or payload.subject)
+
         await self._comment_repo.add(TicketComment(
             ticket_id=ticket_id,
             author_id=customer.id,
             author_role=UserRole.CUSTOMER.value,
-            body=payload.body_text or payload.subject,
+            body=clean_body,
             is_internal=False,
             triggers_hold=False,
             triggers_resume=False,
@@ -234,15 +271,45 @@ class EmailIngestService:
         resp.raise_for_status()
         return UserDTO.model_validate(resp.json())
 
+    # ── Area resolution ───────────────────────────────────────────────────────
+
+    async def _resolve_area(self, subject: str, body: str) -> int | None:
+        """
+        Try to match subject + body against known area names from DB.
+        Returns area_id of the first case-insensitive substring match, or None.
+        """
+        try:
+            areas = await self._area_repo.get_all()
+            if not areas:
+                return None
+
+            text = (subject + " " + body).lower()
+            for area in areas:
+                if area.name.lower() in text:
+                    logger.debug(
+                        "email_ingest: area matched name=%r area_id=%s",
+                        area.name, area.area_id,
+                    )
+                    return area.area_id
+        except Exception:
+            logger.exception("email_ingest: area resolution failed — using None")
+
+        return None
+
     # ── Error capture ─────────────────────────────────────────────────────────
 
     async def _save_failed_thread(
         self, payload: EmailPayload, now: datetime, error: str
     ) -> None:
-        """Write a minimal row so failed ingestions are visible in the DB."""
+        """
+        Write a minimal row so failed ingestions are visible in the DB.
+        ticket_id is NULL — no ticket was created.
+        Rollback first in case the previous exception aborted the transaction.
+        """
         try:
+            await self._db.rollback()
             self._db.add(EmailThread(
-                ticket_id=0,   # 0 = sentinel: no ticket was created
+                ticket_id=None,
                 message_id=payload.message_id,
                 in_reply_to=payload.in_reply_to,
                 raw_subject=payload.subject,
@@ -259,10 +326,68 @@ class EmailIngestService:
     # ── Utilities ─────────────────────────────────────────────────────────────
 
     @staticmethod
+    def _strip_reply_quotes(body: str) -> str:
+        """
+        Remove the quoted original email from a reply body.
+        Keeps only the new content the customer actually wrote.
+
+        Handles the most common separators:
+          - Outlook:  '________________________________'
+          - Outlook:  '-----Original Message-----'
+          - Gmail:    'On <date> ... wrote:'
+          - Standard: lines starting with '>'
+        """
+        if not body:
+            return body
+
+        lines = body.splitlines()
+        cut_at = len(lines)
+
+        for i, line in enumerate(lines):
+            s = line.strip()
+
+            if s.startswith("________________________________"):
+                cut_at = i
+                break
+
+            if s.lower().startswith("-----original message-----"):
+                cut_at = i
+                break
+
+            if s.startswith("On ") and (
+                "wrote:" in s or
+                (i + 1 < len(lines) and "wrote:" in lines[i + 1])
+            ):
+                cut_at = i
+                break
+
+            if s.startswith(">"):
+                cut_at = i
+                break
+
+        result = "\n".join(lines[:cut_at]).strip()
+        return result or body
+
+    @staticmethod
     def _clean_subject(subject: str) -> str:
-        """Strip Re:/Fwd: prefixes and [TKT-XXXX] tags from subject for ticket title."""
+        """
+        Strip reply/forward prefixes (including localised variants) and
+        [TKT-XXXX] tags from the subject so the ticket title is clean.
+        """
         s = subject.strip()
-        for prefix in ("Re:", "RE:", "Fwd:", "FWD:", "Fw:", "FW:"):
-            if s.startswith(prefix):
-                s = s[len(prefix):].strip()
+        prefixes = (
+            "Re:", "RE:", "re:",
+            "Fwd:", "FWD:", "Fw:", "FW:",
+            "AW:",          # German
+            "RÉP:", "Rép:", # French
+            "RIF:",         # Italian
+            "回复:",         # Chinese Simplified
+        )
+        changed = True
+        while changed:
+            changed = False
+            for prefix in prefixes:
+                if s.lower().startswith(prefix.lower()):
+                    s = s[len(prefix):].strip()
+                    changed = True
         return _TICKET_NUM_RE.sub("", s).strip() or subject

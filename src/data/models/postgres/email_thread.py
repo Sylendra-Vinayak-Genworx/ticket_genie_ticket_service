@@ -8,6 +8,10 @@ Added on top of the original skeleton:
   raw_body_text  — plain-text body for reference / search
   processed_at   — stamped when ingestion succeeds
   processing_error — set when ingestion fails (for debug / retry)
+
+ticket_id is NULLABLE so that failed ingestions (where no ticket was
+created) can still write an error row without violating the FK constraint.
+NULL ticket_id = ingestion failed, check processing_error column.
 """
 
 from __future__ import annotations
@@ -37,14 +41,16 @@ class EmailThread(Base):
 
     thread_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    ticket_id: Mapped[int] = mapped_column(
+    # nullable=True so failed-ingestion rows can be stored without a ticket FK
+    ticket_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("tickets.ticket_id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 
     # ── RFC 2822 identifiers ──────────────────────────────────────────────────
+    # message_id is stored lowercase — see imap_poller.py normalisation.
     message_id: Mapped[str] = mapped_column(String(512), nullable=False, unique=True, index=True)
     in_reply_to: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     raw_subject: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -66,7 +72,7 @@ class EmailThread(Base):
     processing_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────────────────
-    ticket: Mapped["Ticket"] = relationship("Ticket", back_populates="email_threads")
+    ticket: Mapped[Optional["Ticket"]] = relationship("Ticket", back_populates="email_threads")
 
     __table_args__ = (
         Index("ix_email_threads_in_reply_to", "in_reply_to"),
