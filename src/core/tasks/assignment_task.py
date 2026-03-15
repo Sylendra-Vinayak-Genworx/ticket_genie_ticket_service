@@ -22,6 +22,7 @@ Routing pipeline
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -54,20 +55,26 @@ async def _score_assign_ticket(ticket_id: int) -> bool:
     async with AsyncSessionFactory() as session:
         ticket_repo = TicketRepository(session)
 
-        ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+        ticket = None
+        for attempt in range(5):
+            ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+            if ticket:
+                break
+            logger.warning("[ticket=%s] Not found yet, retry %s/5 ...", ticket_id, attempt + 1)
+            await asyncio.sleep(0.5)
 
         if not ticket:
-            logger.error("[ticket=%s] Not found — aborting", ticket_id)
+            logger.error("[ticket=%s] Not found after retries — aborting", ticket_id)
             return False
 
         if ticket.routing_status == RoutingStatus.SUCCESS.value and ticket.assignee_id:
             logger.info("[ticket=%s] Already routed — skipping", ticket_id)
             return True
 
-        svc = AutoAssignmentService(session)
+        svc = AutoAssignmentService(session, auth_client)
         result = await svc.assign(
             ticket_id=ticket_id,
-            area_of_concern=ticket.area_of_concern,
+            area_id=ticket.area_of_concern,
         )
 
         if result.assigned_to:
@@ -123,10 +130,15 @@ async def _fallback_to_lead(ticket_id: int) -> None:
         event_repo = TicketEventRepository(session)
         assignment_repo = TicketAssignmentRepository(session)
 
-        ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+        ticket = None
+        for attempt in range(5):
+            ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+            if ticket:
+                break
+            await asyncio.sleep(0.5)
 
         if not ticket:
-            logger.error("[ticket=%s] ticket not found", ticket_id)
+            logger.error("[ticket=%s] ticket not found after retries", ticket_id)
             return
 
         if ticket.assignee_id:
@@ -152,7 +164,7 @@ async def _fallback_to_lead(ticket_id: int) -> None:
             # Use assignment repo to pick least-loaded lead, preferring same team
             chosen_lead_id = await assignment_repo.get_least_loaded_lead_for_team(
                 lead_ids=lead_ids,
-                team_id=ticket.team_id,
+                preferred_team_id=ticket.team_id,
             )
             lead_id = chosen_lead_id
             lead_team_id = lead_team_map.get(chosen_lead_id) if chosen_lead_id else None
@@ -310,8 +322,7 @@ def auto_assign_ticket(self, ticket_id: int, ticket_title: str):
         except Exception:
             logger.exception("[ticket=%s] Fallback also failed", ticket_id)
             raise self.retry(exc=exc, countdown=30 * 2 ** self.request.retries)
-        
-        # Fallback executed successfully, so we do NOT retry the whole task
+
         return {
             "ticket_id": ticket_id,
             "routing_status": RoutingStatus.AI_FAILED.value,

@@ -248,7 +248,7 @@ class TicketRepository:
             select(Ticket).where(
                 Ticket.routing_status == RoutingStatus.AI_FAILED.value,
                 Ticket.queue_type == QueueType.DIRECT.value,
-                Ticket.fallback_assigned_at.isnot(None),
+                Ticket.fallback_assigned_at == None,
                 Ticket.fallback_assigned_at < cutoff,
                 Ticket.assignee_id.isnot(None),
                 Ticket.status.in_([
