@@ -9,10 +9,31 @@ NEW TICKET
   (runs the full pipeline: classify → SLA → ACKNOWLEDGED → auto-assign)
   and save an EmailThread row linking this email to the new ticket.
 
+  Outbound: send ACK email via EmailNotificationService.send_ticket_ack()
+  so the customer knows their request was received.  The ACK sets
+  In-Reply-To / References pointing at the customer's original message
+  so the reply lands in the same mail thread.
+
 REPLY (add comment)
 ───────────────────
   Matching ticket found → add a TicketComment with the email body
   and save a new EmailThread row linked to the same ticket.
+
+  Outbound (first reply only): after the customer's first reply comment,
+  send a "continue in UI" email via
+  EmailNotificationService.send_continue_in_ui() with a direct link to
+  the ticket portal so they can switch to the richer web interface.
+  Subsequent replies are ingested silently — the portal link is sent once.
+
+  "First reply" is detected by counting existing EmailThread rows for
+  the ticket *before* writing the new one — a count of exactly 1 means
+  only the original inbound email exists, making this the first reply.
+
+Both outbound sends go through EmailNotificationService so they:
+  • Use the same SMTP config source (DB → env fallback) as all other
+    notification emails — no second SMTP stack.
+  • Are logged to the notification_log table for observability.
+  • Share the same delivery / retry / dev-mode logic.
 
 Thread matching priority
 ────────────────────────
@@ -29,13 +50,15 @@ Customer resolution
 ───────────────────
   Looks up the sender by email via Auth Service.
   If not found, provisions a basic customer account automatically.
-  This keeps the ingest pipeline fully autonomous — no manual user creation needed.
 
 Error handling
 ──────────────
   Any exception is caught, logged, and a failed EmailThread row is written
   with ticket_id=NULL so failures are visible in the DB and can be retried.
   The exception is then re-raised so the Celery task can decide on retry.
+
+  Outbound email failures are caught and logged but never allowed to fail
+  the ingest itself — the ticket/comment is always committed first.
 """
 
 from __future__ import annotations
@@ -49,6 +72,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import get_settings
 from src.constants.enum import Environment, TicketSource, UserRole
+from src.core.services.notification.email_service import EmailNotificationService
 from src.core.services.notification.manager import notification_manager
 from src.core.services.ticket_service import TicketService
 from src.data.clients.auth_client import AuthServiceClient, UserDTO
@@ -136,13 +160,8 @@ class EmailIngestService:
 
     async def _create_new_ticket(self, payload: EmailPayload, now: datetime) -> tuple[int, str]:
         customer = await self._resolve_customer(payload.sender_email)
-
-        # Resolve area_of_concern by matching subject+body against known areas.
-        # This enables score-based assignment for email tickets (same as UI tickets).
-        # Returns None if no match — falls through to least-loaded agent globally.
-        area_id = await self._resolve_area(payload.subject, payload.body_text or "")
-
-        title = self._clean_subject(payload.subject)
+        area_id  = await self._resolve_area(payload.subject, payload.body_text or "")
+        title    = self._clean_subject(payload.subject)
 
         ticket = await self._ticket_svc.create_ticket(
             payload=TicketCreateRequest(
@@ -169,9 +188,39 @@ class EmailIngestService:
             processed_at=now,
         ))
 
-        # Use a FRESH session for the notification — self._db is still
-        # mid-transaction (ticket + thread unflushed). Sharing the session
-        # causes asyncpg to time out and corrupts the transaction.
+        # ── ACK email ─────────────────────────────────────────────────────────
+        # Goes through EmailNotificationService so the SMTP config source (DB →
+        # env), notification_log entry, and dev-mode short-circuit are consistent
+        # with every other outbound email in the system.
+        #
+        # Fresh session required: self._db is still mid-transaction (ticket +
+        # thread not yet flushed). Reusing it stalls asyncpg and corrupts the
+        # transaction — same isolation pattern as the notification block below.
+        #
+        # Fire-and-forget: a send failure must never roll back the ticket.
+        try:
+            customer_name = (
+                getattr(customer, "full_name", None)
+                or payload.sender_email.split("@")[0]
+            )
+            async with AsyncSessionFactory() as ack_session:
+                await EmailNotificationService(ack_session).send_ticket_ack(
+                    ticket_id=ticket.ticket_id,
+                    recipient_id=customer.id,
+                    recipient_email=payload.sender_email,
+                    customer_name=customer_name,
+                    ticket_number=ticket.ticket_number,
+                    original_message_id=payload.message_id,
+                )
+                await ack_session.commit()
+        except Exception:
+            logger.exception(
+                "email_ingest: ACK email failed for ticket_id=%s — ticket still created",
+                ticket.ticket_id,
+            )
+
+        # ── In-app notification ───────────────────────────────────────────────
+        # Fresh session for the same reason as the ACK block above.
         try:
             async with AsyncSessionFactory() as notif_session:
                 await notification_manager.send(
@@ -204,7 +253,12 @@ class EmailIngestService:
     ) -> None:
         customer = await self._resolve_customer(payload.sender_email)
 
-        # Strip quoted original email — store only what the customer wrote.
+        # Count existing thread rows BEFORE writing the new one.
+        # count == 1  →  only the original inbound email exists
+        #             →  this is the customer's first reply → send portal link
+        # count  > 1  →  subsequent reply → ingest silently
+        is_first_reply = await self._thread_repo.count_by_ticket_id(ticket_id) == 1
+
         clean_body = self._strip_reply_quotes(payload.body_text or payload.subject)
 
         await self._comment_repo.add(TicketComment(
@@ -230,9 +284,36 @@ class EmailIngestService:
         ))
 
         logger.info(
-            "email_ingest: added comment to ticket_id=%s from=%s",
-            ticket_id, payload.sender_email,
+            "email_ingest: added comment to ticket_id=%s from=%s first_reply=%s",
+            ticket_id, payload.sender_email, is_first_reply,
         )
+
+        # ── "Continue in UI" reply (first customer reply only) ────────────────
+        # Fresh session + fire-and-forget — same reasoning as ACK block above.
+        if is_first_reply:
+            try:
+                ticket = await self._ticket_repo.get_by_id(ticket_id)
+                ticket_number = ticket.ticket_number if ticket else f"TKT-{ticket_id}"
+                customer_name = (
+                    getattr(customer, "full_name", None)
+                    or payload.sender_email.split("@")[0]
+                )
+                async with AsyncSessionFactory() as ui_session:
+                    await EmailNotificationService(ui_session).send_continue_in_ui(
+                        ticket_id=ticket_id,
+                        recipient_id=customer.id,
+                        recipient_email=payload.sender_email,
+                        customer_name=customer_name,
+                        ticket_number=ticket_number,
+                        original_message_id=payload.message_id,
+                    )
+                    await ui_session.commit()
+            except Exception:
+                logger.exception(
+                    "email_ingest: continue-in-UI email failed for ticket_id=%s "
+                    "— comment still saved",
+                    ticket_id,
+                )
 
     # ── Customer resolution ───────────────────────────────────────────────────
 
@@ -245,7 +326,6 @@ class EmailIngestService:
         settings = get_settings()
         base = settings.auth_service_url.rstrip("/")
 
-        # Lookup
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 resp = await client.get(
@@ -257,7 +337,6 @@ class EmailIngestService:
         except httpx.TransportError as exc:
             logger.warning("email_ingest: auth lookup failed for %s: %s", sender_email, exc)
 
-        # Auto-provision
         logger.info("email_ingest: provisioning new customer email=%s", sender_email)
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
             resp = await client.post(
@@ -274,15 +353,10 @@ class EmailIngestService:
     # ── Area resolution ───────────────────────────────────────────────────────
 
     async def _resolve_area(self, subject: str, body: str) -> int | None:
-        """
-        Try to match subject + body against known area names from DB.
-        Returns area_id of the first case-insensitive substring match, or None.
-        """
         try:
             areas = await self._area_repo.get_all()
             if not areas:
                 return None
-
             text = (subject + " " + body).lower()
             for area in areas:
                 if area.name.lower() in text:
@@ -293,7 +367,6 @@ class EmailIngestService:
                     return area.area_id
         except Exception:
             logger.exception("email_ingest: area resolution failed — using None")
-
         return None
 
     # ── Error capture ─────────────────────────────────────────────────────────
@@ -301,11 +374,6 @@ class EmailIngestService:
     async def _save_failed_thread(
         self, payload: EmailPayload, now: datetime, error: str
     ) -> None:
-        """
-        Write a minimal row so failed ingestions are visible in the DB.
-        ticket_id is NULL — no ticket was created.
-        Rollback first in case the previous exception aborted the transaction.
-        """
         try:
             await self._db.rollback()
             self._db.add(EmailThread(
@@ -327,61 +395,33 @@ class EmailIngestService:
 
     @staticmethod
     def _strip_reply_quotes(body: str) -> str:
-        """
-        Remove the quoted original email from a reply body.
-        Keeps only the new content the customer actually wrote.
-
-        Handles the most common separators:
-          - Outlook:  '________________________________'
-          - Outlook:  '-----Original Message-----'
-          - Gmail:    'On <date> ... wrote:'
-          - Standard: lines starting with '>'
-        """
         if not body:
             return body
-
         lines = body.splitlines()
         cut_at = len(lines)
-
         for i, line in enumerate(lines):
             s = line.strip()
-
             if s.startswith("________________________________"):
-                cut_at = i
-                break
-
+                cut_at = i; break
             if s.lower().startswith("-----original message-----"):
-                cut_at = i
-                break
-
+                cut_at = i; break
             if s.startswith("On ") and (
                 "wrote:" in s or
                 (i + 1 < len(lines) and "wrote:" in lines[i + 1])
             ):
-                cut_at = i
-                break
-
+                cut_at = i; break
             if s.startswith(">"):
-                cut_at = i
-                break
-
+                cut_at = i; break
         result = "\n".join(lines[:cut_at]).strip()
         return result or body
 
     @staticmethod
     def _clean_subject(subject: str) -> str:
-        """
-        Strip reply/forward prefixes (including localised variants) and
-        [TKT-XXXX] tags from the subject so the ticket title is clean.
-        """
         s = subject.strip()
         prefixes = (
             "Re:", "RE:", "re:",
             "Fwd:", "FWD:", "Fw:", "FW:",
-            "AW:",          # German
-            "RÉP:", "Rép:", # French
-            "RIF:",         # Italian
-            "回复:",         # Chinese Simplified
+            "AW:", "RÉP:", "Rép:", "RIF:", "回复:",
         )
         changed = True
         while changed:

@@ -1,7 +1,6 @@
-from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.data.models.postgres.email_thread import EmailThread
@@ -35,6 +34,25 @@ class EmailThreadRepository:
             select(EmailThread).where(EmailThread.message_id == in_reply_to.lower())
         )
         return result.scalar_one_or_none()
+
+    async def count_by_ticket_id(self, ticket_id: int) -> int:
+        """
+        Returns the number of EmailThread rows already stored for a ticket.
+
+        Used by EmailIngestService to decide whether the current inbound
+        message is the customer's first reply:
+
+            count == 1  →  only the original inbound email exists
+                           → this is the first reply → send "continue in UI"
+            count  > 1  →  subsequent replies → ingest silently
+
+        The count is taken BEFORE the new row is written so the caller
+        sees the pre-insert state.
+        """
+        result = await self.db.execute(
+            select(func.count()).where(EmailThread.ticket_id == ticket_id)
+        )
+        return result.scalar_one()
 
     # ── WRITE ─────────────────────────────────────────────────────────────────
 

@@ -17,9 +17,12 @@ from src.core.services.keyword_rule_service import KeywordRuleService
 from src.core.services.sla_rule_service import SLARuleManagementService
 from src.core.services.ticket_service import TicketService
 
+from fastapi import Depends, HTTPException, status
 
 # ── DB session ─────────────────────────────────────────────────────────────
 DBSession = Annotated[AsyncSession, Depends(get_db)]
+
+
 
 
 # ── Current user context (set by JWT middleware) ────────────────────────────
@@ -40,6 +43,21 @@ def get_current_user_role(request: Request) -> str:
 CurrentUserID   = Annotated[str, Depends(get_current_user_id)]   # FIX: str
 CurrentUserRole = Annotated[str, Depends(get_current_user_role)]
 
+def require_admin(
+    user_id: CurrentUserID,
+    role: CurrentUserRole,
+) -> str:
+    """
+    Ensure the current user has admin privileges.
+    Returns the user_id if authorized.
+    """
+    if role.lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required",
+        )
+
+    return user_id
 
 # ── TicketService factory ───────────────────────────────────────────────────
 def get_ticket_service(db: DBSession) -> TicketService:
