@@ -341,6 +341,11 @@ class TicketService:
             ticket.assignee_id = payload.assignee_id
             ticket.queue_type = QueueType.DIRECT.value
             ticket.routing_status = RoutingStatus.SUCCESS.value
+   
+            if ticket.is_escalated:
+                ticket.is_escalated = False
+                ticket.escalation_level = 0
+
 
         resolved_team_id = team_id
         if resolved_team_id is not None:

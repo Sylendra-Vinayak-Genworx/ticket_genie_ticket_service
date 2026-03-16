@@ -85,7 +85,7 @@ async def get_dashboard(
     if user_role == "team_lead":
         assignee_ids = await _resolve_team_member_ids(user_id, auth)
     return await svc.get_admin_dashboard(
-        filters, current_user_role=user_role, assignee_ids=assignee_ids
+        filters, current_user_role=user_role, assignee_ids=assignee_ids, auth_client=auth
     )
 
 
