@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
+from sqlalchemy import func, select, or_
 from src.constants.enum import QueueType, RoutingStatus, TicketStatus
 from src.data.models.postgres.ticket import Ticket
 from src.schemas.ticket_schema import TicketListFilters
@@ -71,8 +71,10 @@ class TicketRepository:
     async def get_escalatable(self, now: datetime) -> list[Ticket]:
         result = await self.db.execute(
             select(Ticket).where(
-                Ticket.resolution_sla_breached_at != None,   # noqa: E712
-                Ticket.response_sla_breached_at!=None,
+                or_(
+    Ticket.resolution_sla_breached_at.isnot(None),
+    Ticket.response_sla_breached_at.isnot(None)
+),
                 Ticket.escalation_level > 0, # noqa: E712
                 Ticket.status.not_in([TicketStatus.RESOLVED, TicketStatus.CLOSED]),
             )

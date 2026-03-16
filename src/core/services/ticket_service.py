@@ -335,16 +335,13 @@ class TicketService:
             raise InsufficientPermissionsError("Agents can only self-assign tickets.")
 
         old_assignee = ticket.assignee_id
+        is_reassignment = old_assignee is not None
 
-        # Only update assignee_id when an agent is being assigned.
-        # When routing to a team (fallback / escalation) the assignee_id is
-        # intentionally left NULL so agents can self-claim from the team queue.
         if payload.assignee_id:
             ticket.assignee_id = payload.assignee_id
             ticket.queue_type = QueueType.DIRECT.value
             ticket.routing_status = RoutingStatus.SUCCESS.value
 
-        # team_id: prefer the explicit argument, then the payload, then keep existing
         resolved_team_id = team_id
         if resolved_team_id is not None:
             ticket.team_id = resolved_team_id
@@ -358,16 +355,22 @@ class TicketService:
             field_name="assignee_id",
             old_value=str(old_assignee) if old_assignee else None,
             new_value=ticket.assignee_id or f"team:{ticket.team_id}",
+            reason="Reassigned to new agent" if is_reassignment else "Initial assignment",
         ))
-        await self.transition_status(
-            ticket_id=ticket_id,
-            payload=TicketStatusUpdateRequest(
-                new_status=TicketStatus.OPEN,
-                comment="Ticket assigned to agent",
-            ),
-            current_user_id=current_user_id,
-            current_user_role=current_user_role
-        )
+
+        # Only auto-transition ACKNOWLEDGED → OPEN on first assignment.
+        # On reassignment the ticket is mid-flight (OPEN / IN_PROGRESS / ON_HOLD),
+        # status should not be rewound.
+        if ticket.status == TicketStatus.ACKNOWLEDGED:
+            await self.transition_status(
+                ticket_id=ticket_id,
+                payload=TicketStatusUpdateRequest(
+                    new_status=TicketStatus.OPEN,
+                    comment="Ticket assigned to agent",
+                ),
+                current_user_id=current_user_id,
+                current_user_role=current_user_role,
+            )
 
         try:
             customer = await self._auth.get_user(ticket.customer_id)
@@ -375,6 +378,7 @@ class TicketService:
         except Exception:
             customer_name = "Customer"
 
+        # Always notify the new assignee regardless of first assign or reassign
         _fire_notification(
             request=TicketAssignedRequest(
                 ticket_id=ticket.ticket_id,
@@ -389,11 +393,11 @@ class TicketService:
         )
 
         logger.info(
-            "assigned: id=%s → assignee=%s team=%s by %s",
-            ticket_id, ticket.assignee_id, ticket.team_id, current_user_id,
+            "%s: id=%s → assignee=%s (was %s) team=%s by %s",
+            "reassigned" if is_reassignment else "assigned",
+            ticket_id, ticket.assignee_id, old_assignee, ticket.team_id, current_user_id,
         )
         return ticket
-
 
     async def get_my_tickets(
         self,
