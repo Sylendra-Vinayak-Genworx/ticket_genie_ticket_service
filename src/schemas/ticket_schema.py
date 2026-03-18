@@ -116,6 +116,7 @@ class TicketBriefResponse(BaseModel):
     area_of_concern: Optional[int] = None
     source: TicketSource
     customer_id: str
+    team_id: Optional[str] = None
     assignee_id: Optional[str] = None
     assigned_agent_id: Optional[int] = None
     queue_type: str = QueueType.DIRECT.value

@@ -115,6 +115,7 @@ async def get_sla_compliance(
 async def get_agent_performance(
     agent_user_id: str,
     svc: AnalyticsServiceDep,
+    auth: AuthClientDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
 ):
@@ -122,6 +123,7 @@ async def get_agent_performance(
         agent_user_id=agent_user_id,
         current_user_id=user_id,
         current_user_role=user_role,
+        auth_client=auth,
     )
 
 

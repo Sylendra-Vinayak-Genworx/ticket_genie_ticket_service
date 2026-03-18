@@ -55,8 +55,16 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = Field(default="")
     SMTP_FROM_NAME: str = Field(default="Support Team")
 
+    # ── Google Cloud Storage ──────────────────────────────────────────────────
+    GCS_ENABLED: bool = Field(default=True)
+    GCS_PROJECT_ID: str = Field(default="gwx-internship-01")
+    GCS_BUCKET_NAME: str = Field(default="gwx-stg-intern-01")
+    GCS_BUCKET_PREFIX: str = Field(default="ticketing-genie")
+    GCS_TARGET_SERVICE_ACCOUNT: str = Field(
+        default="gwx-cloudrun-sa-01@gwx-internship-01.iam.gserviceaccount.com"
+    )
 
-
+    ASSIGNING_LOCK_TIMEOUT_MINUTES: int = Field(default=10)
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

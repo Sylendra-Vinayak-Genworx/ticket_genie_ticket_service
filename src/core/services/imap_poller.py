@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from email.header import decode_header
 from typing import Generator
 
-from src.config.settings import get_settings
 from src.schemas.email_schema import EmailPayload
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,6 @@ def _plain_text(msg: email.message.Message) -> str | None:
         return None
 
     text = raw_bytes.decode(charset, errors="replace")
-    # Normalise \r\n → \n so quote stripping and display work correctly
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
@@ -92,15 +90,34 @@ def _normalise_message_id(raw: str) -> str:
 # ── Poller ─────────────────────────────────────────────────────────────────────
 
 class IMAPPoller:
-    """Thin IMAP4_SSL wrapper. One connection per poll cycle."""
+    """
+    Thin IMAP4_SSL wrapper. One connection per poll cycle.
 
-    def __init__(self) -> None:
-        self._s = get_settings()
+    All configuration is passed explicitly via the constructor so this class
+    has no dependency on settings or the database — the caller (email_tasks.py)
+    is responsible for loading config from DB or env and passing it in.
+    This makes the poller fully synchronous and Celery-friendly.
+    """
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+        mailbox: str = "INBOX",
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._user = user
+        self._password = password
+        self._mailbox = mailbox
 
     def _connect(self) -> imaplib.IMAP4_SSL:
-        conn = imaplib.IMAP4_SSL(self._s.IMAP_HOST, self._s.IMAP_PORT)
-        conn.login(self._s.IMAP_USER, self._s.IMAP_PASSWORD)
-        conn.select(self._s.IMAP_MAILBOX)
+        conn = imaplib.IMAP4_SSL(self._host, self._port)
+        conn.login(self._user, self._password)
+        conn.select(self._mailbox)
         return conn
 
     def fetch_unseen(self) -> Generator[EmailPayload, None, None]:
@@ -111,8 +128,7 @@ class IMAPPoller:
 
         All message_id / in_reply_to / references values are normalised to
         lowercase so that thread matching in EmailThreadRepository is
-        case-insensitive. RFC 2822 message-IDs are technically case-sensitive
-        but many mail servers (Gmail included) mangle the case on replies.
+        case-insensitive.
         """
         conn = self._connect()
         try:
@@ -151,7 +167,6 @@ class IMAPPoller:
                             uid, raw_message_id,
                         )
 
-                    # Normalise: wrap in <>, lowercase — stored this way in DB
                     message_id = _normalise_message_id(raw_message_id)
 
                     # ── In-Reply-To ────────────────────────────────────────
@@ -179,7 +194,6 @@ class IMAPPoller:
                     )
 
                 except Exception as exc:
-                    # Log and continue — one bad message must not stop the batch
                     logger.exception("imap_poller: failed to parse uid=%s: %s", uid, exc)
 
         finally:

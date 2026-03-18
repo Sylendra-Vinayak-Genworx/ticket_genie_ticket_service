@@ -22,7 +22,7 @@ Email ingest pipeline (new):
   send_continue_in_ui     — customer: first reply received, include portal
                             link so they can switch to the richer UI
 
-All outbound sends share the same _load_config → _deliver → _smtp_send
+All outbound sends share the same _ensure_config → _deliver → _smtp_send
 pipeline so SMTP config, delivery logging, and error handling are
 consistent across every trigger.
 """
@@ -61,10 +61,6 @@ _ai_draft = AIDraftService()
 
 
 # ── HTML / text templates for ingest-pipeline outbound emails ─────────────────
-#
-# These are intentionally plain and readable — they come from an automated
-# support pipeline, not a marketing campaign.  The From-name and ticket
-# number are the only branding needed.
 
 _ACK_HTML = """\
 <!DOCTYPE html>
@@ -160,9 +156,7 @@ _CONTINUE_HTML = """\
         directly in our support portal:
       </p>
       <p><a class="btn" href="{ticket_url}">View ticket in portal →</a></p>
-      <p>
-        You can still reply by email if you prefer; both channels update
-        the same ticket.
+      
       </p>
       <p>— {from_name}</p>
     </div>
@@ -179,8 +173,6 @@ _CONTINUE_TEXT = (
     "We've added your message to ticket {ticket_number}.\n\n"
     "You can view and continue the conversation in our support portal:\n"
     "{ticket_url}\n\n"
-    "You can still reply by email if you prefer — both channels update "
-    "the same ticket.\n\n"
     "— {from_name}\n"
 )
 
@@ -192,30 +184,45 @@ class EmailNotificationService:
         self._repo = NotificationLogRepository(db)
         self._config: dict | None = None
 
-    async def _load_config(self) -> dict:
-        """Load SMTP configuration from database or fallback to env."""
-        if self._config:
+    async def _ensure_config(self) -> dict:
+        """
+        Load and cache SMTP configuration for the lifetime of this service instance.
+
+        Resolution order:
+          1. In-memory cache (_config) — avoids repeated DB queries within one
+             request/task lifecycle.
+          2. Database (EmailConfigService) — used when an active config row exists
+             with the required smtp_host and smtp_user fields populated.
+          3. Environment variables — final fallback so the service degrades
+             gracefully when no DB config is present (e.g. first-run / dev).
+        """
+        if self._config is not None:
             return self._config
 
-        # Try database first
+        # ── 1. Try database ────────────────────────────────────────────────
         try:
             service = EmailConfigService(self._db)
             db_config = await service.get_decrypted_config()
-            if db_config and db_config.get("is_active"):
+            if (
+                db_config
+                and db_config.get("is_active")
+                and db_config.get("smtp_host")
+                and db_config.get("smtp_user")
+            ):
                 logger.info("email_service: using database SMTP configuration")
                 self._config = db_config
                 return self._config
-        except Exception as e:
-            logger.warning("email_service: failed to load db config: %s", e)
+        except Exception as exc:
+            logger.warning("email_service: failed to load database config: %s", exc)
 
-        # Fallback to environment
+        # ── 2. Fall back to environment ────────────────────────────────────
         logger.info("email_service: using environment SMTP configuration")
         s = get_settings()
         self._config = {
-            "smtp_host": s.SMTP_HOST,
-            "smtp_port": s.SMTP_PORT,
-            "smtp_user": s.SMTP_USER,
-            "smtp_password": s.SMTP_PASSWORD,
+            "smtp_host":      s.SMTP_HOST,
+            "smtp_port":      s.SMTP_PORT,
+            "smtp_user":      s.SMTP_USER,
+            "smtp_password":  s.SMTP_PASSWORD,
             "smtp_from_name": getattr(s, "SMTP_FROM_NAME", "Support Team"),
         }
         return self._config
@@ -225,7 +232,7 @@ class EmailNotificationService:
     async def send_ticket_created(
         self, req: TicketCreatedRequest, recipient_email: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         subject = f"[{req.ticket_number}] Your support ticket has been received"
         body = (
             f"Hi,\n\n"
@@ -246,7 +253,7 @@ class EmailNotificationService:
     async def send_status_changed(
         self, req: StatusChangedRequest, recipient_email: str, customer_name: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         draft = await _ai_draft.draft(
             mode=ReplyMode.NOTIFY_CUSTOMER,
             context=TicketContext(
@@ -272,7 +279,7 @@ class EmailNotificationService:
     async def send_agent_comment(
         self, req: AgentCommentRequest, recipient_email: str, customer_name: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         draft = await _ai_draft.draft(
             mode=ReplyMode.NOTIFY_CUSTOMER,
             context=TicketContext(
@@ -299,7 +306,7 @@ class EmailNotificationService:
     async def send_customer_comment(
         self, req: CustomerCommentRequest, recipient_email: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         subject = f"[{req.ticket_number}] New reply from {req.customer_name}"
         body = (
             f"Hi,\n\n"
@@ -321,7 +328,7 @@ class EmailNotificationService:
     async def send_ticket_assigned(
         self, req: TicketAssignedRequest, recipient_email: str, agent_name: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         draft = await _ai_draft.draft(
             mode=ReplyMode.NOTIFY_AGENT,
             context=TicketContext(
@@ -347,7 +354,7 @@ class EmailNotificationService:
     async def send_sla_breached(
         self, req: SLABreachedRequest, recipient_email: str, lead_name: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         draft = await _ai_draft.draft(
             mode=ReplyMode.NOTIFY_AGENT,
             context=TicketContext(
@@ -376,7 +383,7 @@ class EmailNotificationService:
     async def send_auto_closed(
         self, req: AutoClosedRequest, recipient_email: str, customer_name: str
     ) -> None:
-        config = await self._load_config()
+        config = await self._ensure_config()
         subject = f"[{req.ticket_number}] Your ticket has been closed"
         body = (
             f"Hi {customer_name},\n\n"
@@ -412,31 +419,30 @@ class EmailNotificationService:
 
         Sets In-Reply-To / References pointing at the customer's original
         message so this ACK lands in the same mail thread in their client.
-        The customer can reply to this email and it will be matched back to
-        the ticket via the In-Reply-To chain.
         """
-        config = await self._load_config()
-        from_name = config["smtp_from_name"]
-        subject = f"[{ticket_number}] We received your support request"
-        html = _ACK_HTML.format(
+        config = await self._ensure_config()
+        from_name = config.get("smtp_from_name", "Support Team")
+
+        html_body = _ACK_HTML.format(
             customer_name=customer_name,
             ticket_number=ticket_number,
             from_name=from_name,
         )
-        text = _ACK_TEXT.format(
+        text_body = _ACK_TEXT.format(
             customer_name=customer_name,
             ticket_number=ticket_number,
             from_name=from_name,
         )
+
         await self._deliver(
             config=config,
             ticket_id=ticket_id,
             recipient_id=recipient_id,
             recipient_email=recipient_email,
-            subject=subject,
-            body=text,
+            subject=f"[{ticket_number}] Support request received",
+            body=text_body,
+            html_body=html_body,
             event_type="EMAIL_INGEST_ACK",
-            html_body=html,
             in_reply_to=original_message_id,
             references=original_message_id,
         )
@@ -452,6 +458,7 @@ class EmailNotificationService:
         recipient_id: str,
         recipient_email: str,
         customer_name: str,
+        customer_role: str,
         ticket_number: str,
         original_message_id: str,
     ) -> None:
@@ -459,39 +466,40 @@ class EmailNotificationService:
         Sent after the customer's first email reply on a ticket.
 
         Includes a direct link to the ticket in the web portal so they can
-        switch to the richer UI for subsequent messages. Sent only once —
-        the ingest service detects first-reply by counting existing thread
-        rows before writing the new one.
+        switch to the richer UI for subsequent messages.
         """
-        config = await self._load_config()
-        from_name = config["smtp_from_name"]
+        from src.utils.portal_token import generate_portal_token
+
+        config = await self._ensure_config()
+        from_name = config.get("smtp_from_name", "Support Team")
 
         s = get_settings()
         base_url = getattr(s, "APP_BASE_URL", "http://localhost").rstrip("/")
-        ticket_url = f"{base_url}/tickets/{ticket_id}"
 
-        subject = f"[{ticket_number}] Your reply was received — continue in the portal"
-        html = _CONTINUE_HTML.format(
+        ticket_url = f"{base_url}/login"
+
+        html_body = _CONTINUE_HTML.format(
             customer_name=customer_name,
             ticket_number=ticket_number,
             ticket_url=ticket_url,
             from_name=from_name,
         )
-        text = _CONTINUE_TEXT.format(
+        text_body = _CONTINUE_TEXT.format(
             customer_name=customer_name,
             ticket_number=ticket_number,
             ticket_url=ticket_url,
             from_name=from_name,
         )
+
         await self._deliver(
             config=config,
             ticket_id=ticket_id,
             recipient_id=recipient_id,
             recipient_email=recipient_email,
-            subject=subject,
-            body=text,
+            subject=f"[{ticket_number}] Continue your conversation on the support portal by using your credentials",
+            body=text_body,
+            html_body=html_body,
             event_type="EMAIL_INGEST_CONTINUE_UI",
-            html_body=html,
             in_reply_to=original_message_id,
             references=original_message_id,
         )
@@ -500,7 +508,6 @@ class EmailNotificationService:
             recipient_email, ticket_number, ticket_url,
         )
 
-    # ── Core delivery ─────────────────────────────────────────────────────────
 
     async def _deliver(
         self,
@@ -527,7 +534,7 @@ class EmailNotificationService:
         status = NotificationStatus.PENDING
 
         try:
-            if config["smtp_user"]:
+            if config.get("smtp_user"):
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
                     None,
@@ -543,7 +550,6 @@ class EmailNotificationService:
                     ),
                 )
             else:
-                # Dev mode — SMTP not configured, log instead of sending
                 logger.info(
                     "email_service [DEV]: to=%s subject=%r\n%s",
                     recipient_email, subject, body,
@@ -579,25 +585,19 @@ class EmailNotificationService:
         """
         Sync SMTP send — called via run_in_executor so it never blocks the loop.
 
-        Builds a plain-text-only message when html_body is None (existing
-        behaviour for all lifecycle notifications).  Builds a
-        multipart/alternative message when html_body is supplied (used by
-        the two new ingest-pipeline sends so customers receive a styled email).
+        Builds a multipart/alternative message always (plain-text + optional HTML).
+        Threading headers (In-Reply-To, References) are set when provided.
 
-        Threading headers (In-Reply-To, References) are set when provided so
-        outbound messages land in the correct thread in the customer's mail
-        client.
+        Port 465 → implicit SSL (SMTP_SSL).
+        Port 587 or any other → STARTTLS (SMTP + starttls).
         """
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
         if html_body:
-            msg: MIMEMultipart | MIMEText = MIMEMultipart("alternative")
-            msg.attach(MIMEText(body, "plain", "utf-8"))
             msg.attach(MIMEText(html_body, "html", "utf-8"))
-        else:
-            msg = MIMEMultipart("alternative")
-            msg.attach(MIMEText(body, "plain"))
 
         msg["Subject"] = subject
-        msg["From"]    = f"{config['smtp_from_name']} <{config['smtp_user']}>"
+        msg["From"]    = f"{config.get('smtp_from_name', 'Support Team')} <{config['smtp_user']}>"
         msg["To"]      = to
 
         if in_reply_to:
@@ -605,10 +605,22 @@ class EmailNotificationService:
         if references:
             msg["References"] = references
 
-        with smtplib.SMTP(config["smtp_host"], config["smtp_port"]) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.login(config["smtp_user"], config["smtp_password"])
-            smtp.sendmail(config["smtp_user"], to, msg.as_string())
+        smtp_host = config["smtp_host"]
+        smtp_port = int(config.get("smtp_port", 587))
+        smtp_user = config["smtp_user"]
+        smtp_pass = config["smtp_password"]
+
+        if smtp_port == 465:
+            # Implicit SSL — no STARTTLS handshake needed
+            with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
+                smtp.login(smtp_user, smtp_pass)
+                smtp.sendmail(smtp_user, to, msg.as_string())
+        else:
+            # Explicit TLS via STARTTLS (port 587 or custom)
+            with smtplib.SMTP(smtp_host, smtp_port) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.login(smtp_user, smtp_pass)
+                smtp.sendmail(smtp_user, to, msg.as_string())
 
         logger.info("email_service: sent event to=%s subject=%r", to, subject)

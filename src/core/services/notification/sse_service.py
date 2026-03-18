@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.constants.enum import EventType, NotificationChannel, NotificationStatus
 from src.schemas.notification_schema import (
+    AgentCommentRequest,
     CustomerCommentRequest,
     SLABreachedRequest,
     StatusChangedRequest,
@@ -160,13 +161,27 @@ class SSENotificationService:
         await self._push(
             recipient_id=req.assignee_id,
             ticket_id=req.ticket_id,
-            event_type="CUSTOMER_COMMENT",
+            event_type=EventType.COMMENT_ADDED.value,
             payload={
                 "type": "CUSTOMER_COMMENT",
                 "ticket_number": req.ticket_number,
                 "title": req.ticket_title,
                 "customer_name": req.customer_name,
                 "message": f"{req.customer_name} replied on [{req.ticket_number}].",
+            },
+        )
+
+    async def send_agent_comment(self, req: AgentCommentRequest) -> None:
+        await self._push(
+            recipient_id=req.customer_id,
+            ticket_id=req.ticket_id,
+            event_type=EventType.COMMENT_ADDED.value,
+            payload={
+                "type": "AGENT_COMMENT",
+                "ticket_number": req.ticket_number,
+                "title": req.ticket_title,
+                "agent_name": req.agent_name,
+                "message": f"{req.agent_name} replied on [{req.ticket_number}].",
             },
         )
 

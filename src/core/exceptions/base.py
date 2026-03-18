@@ -58,3 +58,12 @@ class TicketAlreadyAssignedError(TicketingGenieBaseException):
 class TicketAlreadyEscalatedError(TicketingGenieBaseException):
     status_code = HTTPStatus.CONFLICT
     detail = "Ticket has already been escalated."
+
+# ── Generic resource exceptions ────────────────────────────────────────────
+class NotFoundError(TicketingGenieBaseException):
+    status_code = HTTPStatus.NOT_FOUND
+    detail = "Resource not found."
+
+class ConflictError(TicketingGenieBaseException):
+    status_code = HTTPStatus.CONFLICT
+    detail = "Resource already exists."

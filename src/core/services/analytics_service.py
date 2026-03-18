@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.constants.enum import UserRole
 from src.core.exceptions.base import InsufficientPermissionsError
-from src.data.repositories.agent_repository import AgentRepository
 from src.data.repositories.analytics_repository import AnalyticsRepository
 from src.data.clients.auth_client import AuthServiceClient
 from typing import Optional
@@ -27,7 +26,6 @@ class AnalyticsService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self._analytics_repo = AnalyticsRepository(db)
-        self._agent_repo = AgentRepository(db)
 
     # ── Admin / Lead dashboard ────────────────────────────────────────────────
 
@@ -58,17 +56,12 @@ class AnalyticsService:
             assignee_ids=assignee_ids,
         )
 
-        # Enrich agent rows with display_name.
-        # Priority: agent_profiles table → Auth Service email → UUID prefix
+        # Enrich agent rows with display_name from Auth Service
         top_agents: list[AgentPerformance] = []
         for row in agent_rows:
             agent_user_id = row["agent_user_id"]
-            profile = await self._agent_repo.get_by_user_id(agent_user_id)
 
-            if profile and profile.display_name and profile.display_name != "Unknown":
-                display_name = profile.display_name
-            elif auth_client:
-                # Fallback: resolve from Auth Service — prefer full_name, use email prefix otherwise
+            if auth_client:
                 try:
                     user = await auth_client.get_user(agent_user_id)
                     display_name = user.full_name or user.email.split("@")[0]
@@ -121,6 +114,7 @@ class AnalyticsService:
         agent_user_id: str,
         current_user_id: str,
         current_user_role: str,
+        auth_client: Optional[AuthServiceClient] = None,
     ) -> AgentPerformance:
         role = UserRole(current_user_role)
         if role == UserRole.AGENT and agent_user_id != current_user_id:
@@ -129,10 +123,21 @@ class AnalyticsService:
             raise InsufficientPermissionsError("Customers cannot view agent performance.")
 
         data = await self._analytics_repo.get_agent_summary(agent_user_id)
-        profile = await self._agent_repo.get_by_user_id(agent_user_id)
+
+        # Resolve display_name from Auth Service
+        display_name = "Unknown"
+        if auth_client:
+            try:
+                user = await auth_client.get_user(agent_user_id)
+                display_name = user.full_name or user.email.split("@")[0]
+            except Exception:
+                display_name = agent_user_id[:8] + "…"
+        else:
+            display_name = agent_user_id[:8] + "…"
+
         return AgentPerformance(
             agent_user_id=data["agent_user_id"],
-            display_name=profile.display_name if profile else "Unknown",
+            display_name=display_name,
             total_assigned=data["total_assigned"],
             total_resolved=data["total_resolved"],
             total_breached=data["total_breached"],

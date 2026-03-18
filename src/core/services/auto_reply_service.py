@@ -44,7 +44,7 @@ class ReplyMode(str, Enum):
 # ── System prompt (shared across all modes) ───────────────────────────────────
 
 _SYSTEM_PROMPT = """
-You are a professional and empathetic support assistant for a B2B SaaS platform called TicketGenie.
+You are a professional and empathetic support assistant for a B2C SaaS platform called TicketGenie.
 You write clear, concise support emails on behalf of the support team.
 
 Rules:
