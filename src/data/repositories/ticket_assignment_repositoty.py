@@ -122,7 +122,10 @@ class TicketAssignmentRepository:
         row = result.fetchone()
 
         if row is None:
-            return active_agent_ids[0] if active_agent_ids else None
+            # All agents have zero tickets — pick randomly to avoid silent insertion-
+            # order bias from the Auth Service response.
+            import random
+            return random.choice(active_agent_ids)
 
         return row.assignee_id
 
@@ -131,9 +134,106 @@ class TicketAssignmentRepository:
         lead_ids: list[str],
         preferred_team_id: str | None,
     ) -> str | None:
+        """
+        Return the least-loaded lead, preferring leads whose team_id matches
+        ``preferred_team_id``.  Falls back to the globally least-loaded lead.
+
+        «Least loaded» is measured by active ticket count (same definition as
+        get_least_loaded_agent).  When all leads have zero tickets the function
+        picks randomly to avoid silent bias from Auth Service insertion order.
+        """
         if not lead_ids:
             return None
-        return lead_ids[0]
+
+        # ── Preferred team: pick the least-loaded lead inside that team ───────
+        if preferred_team_id:
+            sql_preferred = text(
+                """
+                WITH lead_workload AS (
+                    SELECT
+                        assignee_id,
+                        COUNT(*) AS workload
+                    FROM tickets
+                    WHERE status IN ('OPEN', 'IN_PROGRESS', 'ON_HOLD')
+                      AND assignee_id IS NOT NULL
+                      AND assignee_id = ANY(:lead_ids)
+                    GROUP BY assignee_id
+                )
+                SELECT ap.user_id, COALESCE(lw.workload, 0) AS workload
+                FROM agent_profiles ap
+                LEFT JOIN lead_workload lw ON lw.assignee_id = ap.user_id
+                WHERE ap.user_id = ANY(:lead_ids)
+                  AND ap.team_id = :preferred_team_id
+                ORDER BY workload ASC
+                LIMIT 1
+                """
+            )
+            result = await self._session.execute(
+                sql_preferred,
+                {"lead_ids": lead_ids, "preferred_team_id": preferred_team_id},
+            )
+            row = result.fetchone()
+            if row is not None:
+                return row.user_id
+
+        # ── Global fallback: least-loaded lead regardless of team ─────────────
+        sql_global = text(
+            """
+            WITH lead_workload AS (
+                SELECT
+                    assignee_id,
+                    COUNT(*) AS workload
+                FROM tickets
+                WHERE status IN ('OPEN', 'IN_PROGRESS', 'ON_HOLD')
+                  AND assignee_id IS NOT NULL
+                  AND assignee_id = ANY(:lead_ids)
+                GROUP BY assignee_id
+            )
+            SELECT ap.user_id, COALESCE(lw.workload, 0) AS workload
+            FROM agent_profiles ap
+            LEFT JOIN lead_workload lw ON lw.assignee_id = ap.user_id
+            WHERE ap.user_id = ANY(:lead_ids)
+            ORDER BY workload ASC
+            LIMIT 1
+            """
+        )
+        result = await self._session.execute(sql_global, {"lead_ids": lead_ids})
+        row = result.fetchone()
+
+        if row is None:
+            # No rows at all (leads have no agent_profile rows yet) — pick randomly.
+            import random
+            return random.choice(lead_ids)
+
+        # If the minimum workload is 0 we might have multiple equally unloaded leads.
+        # Collect all leads at that minimum and pick randomly to avoid bias.
+        if row.workload == 0:
+            sql_zeros = text(
+                """
+                WITH lead_workload AS (
+                    SELECT
+                        assignee_id,
+                        COUNT(*) AS workload
+                    FROM tickets
+                    WHERE status IN ('OPEN', 'IN_PROGRESS', 'ON_HOLD')
+                      AND assignee_id IS NOT NULL
+                      AND assignee_id = ANY(:lead_ids)
+                    GROUP BY assignee_id
+                )
+                SELECT ap.user_id
+                FROM agent_profiles ap
+                LEFT JOIN lead_workload lw ON lw.assignee_id = ap.user_id
+                WHERE ap.user_id = ANY(:lead_ids)
+                  AND COALESCE(lw.workload, 0) = 0
+                """
+            )
+            zero_result = await self._session.execute(sql_zeros, {"lead_ids": lead_ids})
+            zero_ids = [r.user_id for r in zero_result.fetchall()]
+            if zero_ids:
+                import random
+                return random.choice(zero_ids)
+
+        return row.user_id
 
     async def get_agent_workload(self, user_id: str) -> int:
         sql = text(

@@ -13,6 +13,7 @@ from src.data.repositories.ticket_assignment_repositoty import (
 from src.core.services.ticket_service import TicketService
 from src.schemas.ticket_schema import TicketAssignRequest
 from src.constants.enum import UserRole
+from src.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -250,9 +251,36 @@ class AutoAssignmentService:
                 reason="Skilled agents not found in active users",
             )
 
-        # Score and select best agent
-        best = max(enriched_stats, key=self._calculate_score)
-        best_score = self._calculate_score(best)
+        # ── Fix 3: Hard workload cap — exclude overloaded agents before scoring ─
+        settings = get_settings()
+        eligible_stats = [
+            a for a in enriched_stats
+            if a.current_workload < settings.MAX_AGENT_WORKLOAD
+        ]
+        if not eligible_stats:
+            logger.info(
+                "[ticket=%s] All skilled agents at or above MAX_AGENT_WORKLOAD=%d — "
+                "falling through to least-loaded fallback",
+                ticket_id, settings.MAX_AGENT_WORKLOAD,
+            )
+            return AssignmentResult(
+                ticket_id=ticket_id,
+                assigned_to=None,
+                team_id=None,
+                strategy="skill_based",
+                reason=f"All skilled agents at workload cap ({settings.MAX_AGENT_WORKLOAD})",
+            )
+
+        # ── Fix 6: Fair tiebreaking ───────────────────────────────────────────
+        # Find all agents sharing the maximum score, then pick the one with the
+        # lowest workload among them.  If still tied, pick randomly.
+        import random
+        max_score = max(self._calculate_score(a) for a in eligible_stats)
+        top_agents = [a for a in eligible_stats if self._calculate_score(a) == max_score]
+        min_workload = min(a.current_workload for a in top_agents)
+        least_loaded_top = [a for a in top_agents if a.current_workload == min_workload]
+        best = random.choice(least_loaded_top)
+        best_score = max_score
 
         logger.info(
             "[ticket=%s] Skill-based assignment: agent=%s team=%s score=%.2f "
@@ -386,9 +414,15 @@ class AutoAssignmentService:
             0,
         )
 
+        # Fix 4: Cap experience to prevent runaway dominance over proficiency.
+        # Max contribution is EXPERIENCE_CAP * EXPERIENCE_WEIGHT = 20 * 5 = +100,
+        # which keeps it balanced against the proficiency weight range (10–100).
+        settings = get_settings()
+        capped_experience = min(agent.tickets_resolved, settings.EXPERIENCE_CAP)
+
         score = (
             proficiency_weight
-            + (agent.tickets_resolved * EXPERIENCE_WEIGHT)
+            + (capped_experience * EXPERIENCE_WEIGHT)
             + (agent.current_workload * WORKLOAD_PENALTY)
         )
 

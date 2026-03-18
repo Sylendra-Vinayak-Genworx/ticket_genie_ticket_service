@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Paths that never require a token
-_PUBLIC_PATHS: set[str] = {"/health", "/health/", "/docs", "/redoc", "/openapi.json"}
+_PUBLIC_PATHS: set[str] = {"/health", "/health/", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/signup"}
 _PUBLIC_PREFIXES: tuple[str, ...] = ("/docs/", "/redoc/")
 
 

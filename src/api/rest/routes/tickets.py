@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile, File, status
 
 from src.api.rest.dependencies import (
     CurrentUserID,
@@ -245,3 +245,69 @@ async def assign_ticket(
         current_user_role=user_role,
     )
     return TicketBriefResponse.model_validate(ticket)
+
+# ── Allowed MIME types ────────────────────────────────────────────────────────
+_ALLOWED_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+@router.post(
+    "/attachments/upload",
+    summary="Upload a ticket attachment to GCS",
+    description=(
+        "Upload a file before (or after) creating a ticket. "
+        "Returns `file_name` and `file_url` (the GCS blob path). "
+        "Pass `file_url` inside `attachments[]` when calling POST /tickets."
+    ),
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_attachment(
+    file: UploadFile = File(...),
+    user_id: CurrentUserID = None,
+):
+    # ── Validate content-type ─────────────────────────────────────────────────
+    if file.content_type not in _ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                f"File type '{file.content_type}' is not allowed. "
+                f"Accepted: {sorted(_ALLOWED_TYPES)}"
+            ),
+        )
+
+    # ── Read & size-check ─────────────────────────────────────────────────────
+    contents = await file.read()
+    if len(contents) > _MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File exceeds the 10 MB limit.",
+        )
+
+    # ── Upload to GCS ─────────────────────────────────────────────────────────
+    try:
+        from src.core.services.gcs_service import upload_attachment as gcs_upload, get_public_url
+        blob_path = gcs_upload(
+            file_bytes=contents,
+            filename=file.filename or "attachment",
+            folder=f"tickets/pending/{user_id}",
+        )
+        public_url = get_public_url(blob_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GCS upload failed: {exc}",
+        )
+
+    return {
+        "file_name": file.filename,
+        "file_url": public_url,   # frontend passes this into TicketCreateRequest.attachments[]
+    }

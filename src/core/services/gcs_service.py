@@ -23,6 +23,7 @@ def _get_bucket():
     global _bucket
     if _bucket is not None:
         return _bucket
+
     try:
         from google.cloud import storage
     except ImportError as exc:
