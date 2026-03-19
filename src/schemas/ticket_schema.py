@@ -21,13 +21,29 @@ from src.data.models.postgres.ticket_event import TicketEvent
 # ── Attachment ────────────────────────────────────────────────────────────────
 class AttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
+ 
     attachment_id: int
     ticket_id: int
     file_name: str
     file_url: str
     uploaded_by_user_id: str
     uploaded_at: datetime
+ 
+    @classmethod
+    def from_orm_signed(cls, obj) -> "AttachmentResponse":
+        """
+        Build the response from an ORM attachment, replacing the stored blob
+        path with a fresh signed URL valid for 60 minutes.
+        """
+        from src.core.services.gcs_service import generate_signed_url
+        return cls(
+            attachment_id=obj.attachment_id,
+            ticket_id=obj.ticket_id,
+            file_name=obj.file_name,
+            file_url=generate_signed_url(obj.file_url),  # obj.file_url = raw blob path
+            uploaded_by_user_id=obj.uploaded_by_user_id,
+            uploaded_at=obj.uploaded_at,
+        )
 
 
 # ── Ticket Event ──────────────────────────────────────────────────────────────
@@ -213,6 +229,16 @@ class TicketDetailResponse(BaseModel):
     events: list[TicketEventResponse] = Field(default_factory=list)
     comments: list[CommentResponse] = Field(default_factory=list)
     attachments: list[AttachmentResponse] = Field(default_factory=list)
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs) -> "TicketDetailResponse":
+        instance = super().model_validate(obj, **kwargs)
+        # Replace raw blob paths with fresh signed URLs (valid 60 min)
+        if hasattr(obj, "attachments") and obj.attachments:
+            instance.attachments = [
+                AttachmentResponse.from_orm_signed(att) for att in obj.attachments
+            ]
+        return instance
 
 
 # ── Filters (used by list endpoint) ───────────────────────────────────────────

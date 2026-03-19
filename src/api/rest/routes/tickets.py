@@ -1,14 +1,11 @@
 from typing import Optional
-
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile, File, status
-
 from src.api.rest.dependencies import (
     CurrentUserID,
     CurrentUserRole,
     TicketServiceDep,
 )
 from src.constants.enum import Priority, Severity, TicketStatus
-
 from src.schemas.common_schema import PaginatedResponse
 from src.schemas.ticket_schema import (
     CommentCreateRequest,
@@ -20,8 +17,8 @@ from src.schemas.ticket_schema import (
     TicketListFilters,
     TicketStatusUpdateRequest,
 )
-
 from src.data.models.postgres.ticket_comment import TicketComment
+
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
@@ -53,9 +50,6 @@ async def create_ticket(
     user_id: CurrentUserID,
 ):
     ticket = await svc.create_ticket(payload, current_user_id=user_id)
-    # Enqueue AFTER this handler returns — get_db() commits the session
-    # in its finally block before BackgroundTasks run, so the worker is
-    # guaranteed to find the ticket already committed.
     background_tasks.add_task(
         _enqueue_auto_assign, ticket.ticket_id, ticket.title
     )
@@ -160,7 +154,6 @@ async def list_all_tickets(
     )
 
 
-
 @router.get(
     "/{ticket_id}",
     response_model=TicketDetailResponse,
@@ -246,26 +239,13 @@ async def assign_ticket(
     )
     return TicketBriefResponse.model_validate(ticket)
 
-# ── Allowed MIME types ────────────────────────────────────────────────────────
-_ALLOWED_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-    "application/pdf",
-    "text/plain",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
-_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
-
 
 @router.post(
     "/attachments/upload",
     summary="Upload a ticket attachment to GCS",
     description=(
         "Upload a file before (or after) creating a ticket. "
-        "Returns `file_name` and `file_url` (the GCS blob path). "
+        "Returns `file_name` and `file_url` (a signed GCS URL valid for 60 minutes). "
         "Pass `file_url` inside `attachments[]` when calling POST /tickets."
     ),
     status_code=status.HTTP_201_CREATED,
@@ -274,7 +254,14 @@ async def upload_attachment(
     file: UploadFile = File(...),
     user_id: CurrentUserID = None,
 ):
+    from src.core.services.gcs_service import upload_attachment as gcs_upload, generate_signed_url
+
     # ── Validate content-type ─────────────────────────────────────────────────
+    _ALLOWED_TYPES = {
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+        "application/pdf", "text/plain", "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
     if file.content_type not in _ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -286,21 +273,20 @@ async def upload_attachment(
 
     # ── Read & size-check ─────────────────────────────────────────────────────
     contents = await file.read()
-    if len(contents) > _MAX_BYTES:
+    if len(contents) > 10 * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds the 10 MB limit.",
         )
 
-    # ── Upload to GCS ─────────────────────────────────────────────────────────
+    # ── Upload to GCS then generate a signed URL ──────────────────────────────
     try:
-        from src.core.services.gcs_service import upload_attachment as gcs_upload, get_public_url
         blob_path = gcs_upload(
             file_bytes=contents,
             filename=file.filename or "attachment",
             folder=f"tickets/pending/{user_id}",
         )
-        public_url = get_public_url(blob_path)
+        signed_url = generate_signed_url(blob_path)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -309,5 +295,6 @@ async def upload_attachment(
 
     return {
         "file_name": file.filename,
-        "file_url": public_url,   # frontend passes this into TicketCreateRequest.attachments[]
+        "file_url":  signed_url,   # frontend passes this into TicketCreateRequest.attachments[]
+        "blob_path": blob_path,    # store this in the DB — use it to re-generate signed URLs on read
     }

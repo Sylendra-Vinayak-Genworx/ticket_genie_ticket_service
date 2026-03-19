@@ -40,8 +40,8 @@ class TicketRepository:
 
     async def next_ticket_number(self) -> str:
        
-        result = await self.db.execute(select(func.count(Ticket.ticket_id)))
-        count = result.scalar_one()
+        result = await self.db.execute(select(func.max(Ticket.ticket_id)))
+        count = result.scalar_one() or 0
         return f"TKT-{count + 1:04d}"
 
     async def list_for_customer(

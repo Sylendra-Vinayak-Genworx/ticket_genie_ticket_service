@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     )
 
     ASSIGNING_LOCK_TIMEOUT_MINUTES: int = Field(default=10)
+    MAX_AGENT_WORKLOAD: int = Field(default=10)
+    EXPERIENCE_CAP: int = Field(default=50)
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
