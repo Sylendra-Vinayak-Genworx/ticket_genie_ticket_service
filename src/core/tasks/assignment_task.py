@@ -1,27 +1,7 @@
-"""
-src/core/tasks/assignment_task.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Auto-assignment Celery task.
 
-Routing pipeline
-----------------
-1. Run AutoAssignmentService: score agents by experience / (1 + workload) for
-   the ticket's area_of_concern, fall back to least-loaded agent globally.
-   The service writes assignee_id (agent) AND team_id.
-
-2. If no agent found → fallback to least-loaded LEAD (via Auth Service).
-   The lead is NOTIFIED but never written into assignee_id.
-   Instead, ticket.team_id is set to the lead's team_id so the ticket
-   appears in the correct team queue for any agent to self-claim.
-   ticket.assignee_id remains NULL.
-
-3. If no lead available → move ticket to OPEN queue (team_id = NULL).
-
-4. Beat job `check_lead_timeout` watches AI_FAILED tickets and moves them
-   to the OPEN queue when no agent self-claimed within the timeout window.
-"""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -54,20 +34,26 @@ async def _score_assign_ticket(ticket_id: int) -> bool:
     async with AsyncSessionFactory() as session:
         ticket_repo = TicketRepository(session)
 
-        ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+        ticket = None
+        for attempt in range(5):
+            ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+            if ticket:
+                break
+            logger.warning("[ticket=%s] Not found yet, retry %s/5 ...", ticket_id, attempt + 1)
+            await asyncio.sleep(0.5)
 
         if not ticket:
-            logger.error("[ticket=%s] Not found — aborting", ticket_id)
+            logger.error("[ticket=%s] Not found after retries — aborting", ticket_id)
             return False
 
         if ticket.routing_status == RoutingStatus.SUCCESS.value and ticket.assignee_id:
             logger.info("[ticket=%s] Already routed — skipping", ticket_id)
             return True
 
-        svc = AutoAssignmentService(session)
+        svc = AutoAssignmentService(session, auth_client)
         result = await svc.assign(
             ticket_id=ticket_id,
-            area_of_concern=ticket.area_of_concern,
+            area_id=ticket.area_of_concern,
         )
 
         if result.assigned_to:
@@ -123,10 +109,15 @@ async def _fallback_to_lead(ticket_id: int) -> None:
         event_repo = TicketEventRepository(session)
         assignment_repo = TicketAssignmentRepository(session)
 
-        ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+        ticket = None
+        for attempt in range(5):
+            ticket = await ticket_repo.get_by_id(ticket_id, eager=False)
+            if ticket:
+                break
+            await asyncio.sleep(0.5)
 
         if not ticket:
-            logger.error("[ticket=%s] ticket not found", ticket_id)
+            logger.error("[ticket=%s] ticket not found after retries", ticket_id)
             return
 
         if ticket.assignee_id:
@@ -152,7 +143,7 @@ async def _fallback_to_lead(ticket_id: int) -> None:
             # Use assignment repo to pick least-loaded lead, preferring same team
             chosen_lead_id = await assignment_repo.get_least_loaded_lead_for_team(
                 lead_ids=lead_ids,
-                team_id=ticket.team_id,
+                preferred_team_id=ticket.team_id,
             )
             lead_id = chosen_lead_id
             lead_team_id = lead_team_map.get(chosen_lead_id) if chosen_lead_id else None
@@ -242,6 +233,12 @@ async def _move_to_open_queue(ticket_id: int) -> None:
             logger.warning("[ticket=%s] _move_to_open_queue: ticket not found", ticket_id)
             return
 
+        # Capture current status before mutating — used in the audit event.
+        old_status = (
+            ticket.status.value
+            if hasattr(ticket.status, "value")
+            else str(ticket.status)
+        )
         old_team = ticket.team_id
 
         ticket.assignee_id = None
@@ -257,7 +254,7 @@ async def _move_to_open_queue(ticket_id: int) -> None:
             triggered_by_user_id=None,
             event_type=EventType.STATUS_CHANGED,
             field_name="status",
-            old_value=TicketStatus.ACKNOWLEDGED.value,
+            old_value=old_status,        # real status, not hardcoded ACKNOWLEDGED
             new_value=TicketStatus.OPEN.value,
             reason=(
                 f"Fallback team '{old_team}' did not self-claim within the timeout window "
@@ -310,8 +307,7 @@ def auto_assign_ticket(self, ticket_id: int, ticket_title: str):
         except Exception:
             logger.exception("[ticket=%s] Fallback also failed", ticket_id)
             raise self.retry(exc=exc, countdown=30 * 2 ** self.request.retries)
-        
-        # Fallback executed successfully, so we do NOT retry the whole task
+
         return {
             "ticket_id": ticket_id,
             "routing_status": RoutingStatus.AI_FAILED.value,

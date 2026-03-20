@@ -14,7 +14,8 @@ from src.data.models.postgres.email_thread import EmailThread, EmailDirection   
 from src.data.models.postgres.customer_tier import CustomerTier             # noqa: F401
 from src.data.models.postgres.area_of_concern import AreaOfConcern         # noqa: F401
 from src.data.models.postgres.agent_skill import AgentSkill                 # noqa: F401
-
+from src.data.models.postgres.product import Product                        # noqa: F401
+from src.data.models.postgres.business_hours import BusinessHours           # noqa: F401
 __all__ = [
     "Base",
     "AgentSkill",
@@ -33,4 +34,6 @@ __all__ = [
     "CustomerTier",
     "EmailThread",
     "EmailDirection",
+    "Product",
+    "BusinessHours"
 ]

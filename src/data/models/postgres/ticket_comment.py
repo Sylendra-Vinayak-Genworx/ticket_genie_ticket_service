@@ -9,6 +9,7 @@ from src.data.models.postgres.base import Base
 if TYPE_CHECKING:
     from src.data.models.postgres.ticket import Ticket
     from src.data.models.postgres.ticket_event import TicketEvent
+    from src.data.models.postgres.ticket_attachment import TicketAttachment
 
 
 class TicketComment(Base):
@@ -46,3 +47,6 @@ class TicketComment(Base):
 
     ticket: Mapped["Ticket"] = relationship("Ticket", back_populates="comments")
     events: Mapped[list["TicketEvent"]] = relationship("TicketEvent", back_populates="comment")
+    attachments: Mapped[list["TicketAttachment"]] = relationship(
+        "TicketAttachment", back_populates="comment", cascade="all, delete-orphan"
+    )

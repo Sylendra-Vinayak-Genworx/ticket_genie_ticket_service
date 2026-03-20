@@ -11,7 +11,6 @@ from src.constants.enum import (
     QueueType, RoutingStatus
 )
 from src.schemas.notification_schema import (
-    
     AgentCommentRequest,
     AutoClosedRequest,
     CustomerCommentRequest,
@@ -46,6 +45,7 @@ from src.schemas.ticket_schema import (
 )
 from src.data.repositories.ticket_comment_repository import TicketCommentRepository
 from src.data.clients.postgres_client import AsyncSessionLocal
+
 logger = logging.getLogger(__name__)
 
 # ── Strict transition matrix ──────────────────────────────────────────────────
@@ -85,7 +85,6 @@ def _fire_notification(request, auth_client: "AuthServiceClient") -> None:
     asyncio.create_task(_run())
 
 
-
 class TicketService:
     def __init__(self, db: AsyncSession, auth_client: AuthServiceClient) -> None:
         self.db = db
@@ -107,13 +106,13 @@ class TicketService:
         return ticket
 
     async def _record_transition(
-    self,
-    ticket: Ticket,
-    from_status: TicketStatus | None,
-    to_status: TicketStatus,
-    changed_by: str,              
-    reason: str | None = None,
-) -> None:
+        self,
+        ticket: Ticket,
+        from_status: TicketStatus | None,
+        to_status: TicketStatus,
+        changed_by: str,
+        reason: str | None = None,
+    ) -> None:
         """
         Write a STATUS_CHANGED TicketEvent row.
         This IS the timeline — filter ticket_events by event_type=STATUS_CHANGED
@@ -129,7 +128,6 @@ class TicketService:
             new_value=to_status.value,
             reason=reason,
         ))
-
 
     async def create_ticket(
         self,
@@ -199,11 +197,21 @@ class TicketService:
             changed_by=current_user_id, reason="Ticket created",
         )
 
+        # Store only the blob path (strip signed URL query params if present).
+        # Signed URLs are generated fresh on every read — never persisted.
         for url in payload.attachments:
+            clean = url.split("?")[0]  # strip query params
+            if clean.startswith("https://storage.googleapis.com/"):
+                # strip scheme + host + bucket name, leaving just the object path
+                parts = clean.split("/", 4)  # ['https:', '', 'storage.googleapis.com', 'bucket', 'object/path']
+                blob_path = parts[4] if len(parts) > 4 else clean
+            else:
+                blob_path = clean
+
             await self._attachment_repo.add(TicketAttachment(
                 ticket_id=ticket.ticket_id,
-                file_name=url.split("/")[-1],
-                file_url=url,
+                file_name=blob_path.split("/")[-1],
+                file_url=blob_path,
                 uploaded_by_user_id=current_user_id,
             ))
 
@@ -238,7 +246,6 @@ class TicketService:
         # the ticket missing.  The route handler enqueues AFTER get_db() commits.
         return ticket
 
-
     async def transition_status(
         self,
         ticket_id: int,
@@ -261,7 +268,6 @@ class TicketService:
                 f"Allowed: {[s.value for s in allowed]}"
             )
 
-
         if new_status == TicketStatus.IN_PROGRESS:
             if old_status == TicketStatus.ON_HOLD:
                 self._sla_svc.resume_resolution_sla(ticket, now)
@@ -278,7 +284,6 @@ class TicketService:
         elif new_status == TicketStatus.OPEN and old_status == TicketStatus.CLOSED:
             self._sla_svc.restart_resolution_sla(ticket, now)
 
-        
         ticket.status = new_status
         ticket = await self._ticket_repo.save(ticket)
 
@@ -319,7 +324,6 @@ class TicketService:
         )
         return ticket
 
-
     async def assign_ticket(
         self,
         ticket_id: int,
@@ -335,16 +339,17 @@ class TicketService:
             raise InsufficientPermissionsError("Agents can only self-assign tickets.")
 
         old_assignee = ticket.assignee_id
+        is_reassignment = old_assignee is not None
 
-        # Only update assignee_id when an agent is being assigned.
-        # When routing to a team (fallback / escalation) the assignee_id is
-        # intentionally left NULL so agents can self-claim from the team queue.
         if payload.assignee_id:
             ticket.assignee_id = payload.assignee_id
             ticket.queue_type = QueueType.DIRECT.value
             ticket.routing_status = RoutingStatus.SUCCESS.value
 
-        # team_id: prefer the explicit argument, then the payload, then keep existing
+            if ticket.is_escalated:
+                ticket.is_escalated = False
+                ticket.escalation_level = 0
+
         resolved_team_id = team_id
         if resolved_team_id is not None:
             ticket.team_id = resolved_team_id
@@ -358,16 +363,22 @@ class TicketService:
             field_name="assignee_id",
             old_value=str(old_assignee) if old_assignee else None,
             new_value=ticket.assignee_id or f"team:{ticket.team_id}",
+            reason="Reassigned to new agent" if is_reassignment else "Initial assignment",
         ))
-        await self.transition_status(
-            ticket_id=ticket_id,
-            payload=TicketStatusUpdateRequest(
-                new_status=TicketStatus.OPEN,
-                comment="Ticket assigned to agent",
-            ),
-            current_user_id=current_user_id,
-            current_user_role=current_user_role
-        )
+
+        # Only auto-transition ACKNOWLEDGED → OPEN on first assignment.
+        # On reassignment the ticket is mid-flight (OPEN / IN_PROGRESS / ON_HOLD),
+        # status should not be rewound.
+        if ticket.status == TicketStatus.ACKNOWLEDGED:
+            await self.transition_status(
+                ticket_id=ticket_id,
+                payload=TicketStatusUpdateRequest(
+                    new_status=TicketStatus.OPEN,
+                    comment="Ticket assigned to agent",
+                ),
+                current_user_id=current_user_id,
+                current_user_role=current_user_role,
+            )
 
         try:
             customer = await self._auth.get_user(ticket.customer_id)
@@ -375,6 +386,7 @@ class TicketService:
         except Exception:
             customer_name = "Customer"
 
+        # Always notify the new assignee regardless of first assign or reassign
         _fire_notification(
             request=TicketAssignedRequest(
                 ticket_id=ticket.ticket_id,
@@ -389,11 +401,11 @@ class TicketService:
         )
 
         logger.info(
-            "assigned: id=%s → assignee=%s team=%s by %s",
-            ticket_id, ticket.assignee_id, ticket.team_id, current_user_id,
+            "%s: id=%s → assignee=%s (was %s) team=%s by %s",
+            "reassigned" if is_reassignment else "assigned",
+            ticket_id, ticket.assignee_id, old_assignee, ticket.team_id, current_user_id,
         )
         return ticket
-
 
     async def get_my_tickets(
         self,
@@ -420,7 +432,6 @@ class TicketService:
         if UserRole(current_user_role) == UserRole.CUSTOMER and ticket.customer_id != current_user_id:
             raise InsufficientPermissionsError("You can only view your own tickets.")
         return ticket
-    
 
     async def escalate(
         self,
@@ -574,6 +585,17 @@ class TicketService:
             triggers_resume=comment.triggers_resume,
         ))
 
+        # Persist any images/files uploaded alongside this comment
+        for blob_path in (comment.attachments or []):
+            clean = blob_path.split("?")[0]  # strip any signed-URL query params
+            await self._attachment_repo.add(TicketAttachment(
+                ticket_id=comment.ticket_id,
+                comment_id=saved.comment_id,   # ← links attachment to this comment
+                file_name=clean.split("/")[-1],
+                file_url=clean,
+                uploaded_by_user_id=current_user_id,
+            ))
+
         # Internal notes never trigger notifications
         if comment.is_internal:
             return saved
@@ -610,7 +632,6 @@ class TicketService:
 
         if role == UserRole.CUSTOMER and ticket.assignee_id:
             # Customer replied → notify assigned agent
-            # Resolve the customer's real name instead of passing the raw UUID
             try:
                 customer_user = await self._auth.get_user(current_user_id)
                 customer_name = customer_user.email.split("@")[0]
@@ -630,8 +651,6 @@ class TicketService:
             )
 
         elif role in (UserRole.AGENT, UserRole.LEAD, UserRole.ADMIN):
-            # Agent/lead/admin public comment → notify customer via email (EMAIL tickets)
-            # or SSE (portal tickets). manager.send() handles channel routing.
             try:
                 commenter = await self._auth.get_user(current_user_id)
                 agent_name = commenter.email.split("@")[0]
@@ -639,7 +658,6 @@ class TicketService:
                 agent_name = "Support Agent"
 
             if ticket.source == TicketSource.EMAIL:
-                # AI-drafted email reply for email-origin tickets
                 _fire_notification(
                     request=AgentCommentRequest(
                         ticket_id=ticket.ticket_id,

@@ -12,13 +12,7 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 @router.get("/stream")
 async def notification_stream(user_id: CurrentUserID) -> StreamingResponse:
-    """
-    SSE stream for the authenticated user.
-    Frontend connects once; receives events as they are pushed by NotificationManager.
-
-    Event format:
-        data: {"type": "STATUS_CHANGED", "ticket_number": "TKT-0005", ...}\n\n
-    """
+    """SSE endpoint for streaming notifications to the client. Keeps the connection open and sends events as they arrive."""
     async def generator() -> AsyncGenerator[str, None]:
         queue = await sse_bus.subscribe(user_id)
         yield ": connected\n\n"
@@ -48,5 +42,4 @@ async def notification_stream(user_id: CurrentUserID) -> StreamingResponse:
 
 @router.get("/connected")
 async def is_connected(user_id: CurrentUserID) -> dict:
-    """Returns whether the user has an active SSE connection."""
     return {"connected": sse_bus.is_connected(user_id)}

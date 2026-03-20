@@ -1,3 +1,8 @@
+"""
+src/constants/enum.py
+~~~~~~~~~~~~~~~~~~~~~
+Updated enums with ASSIGNING routing status for atomic assignment locking.
+"""
 import enum
 
 
@@ -7,10 +12,11 @@ class UserRole(str, enum.Enum):
     LEAD = "team_lead"
     ADMIN = "admin"
 
+
 class TicketStatus(str, enum.Enum):
     NEW = "NEW"
     ACKNOWLEDGED = "ACKNOWLEDGED"
-    OPEN         = "OPEN"          
+    OPEN = "OPEN"
     IN_PROGRESS = "IN_PROGRESS"
     ON_HOLD = "ON_HOLD"
     RESOLVED = "RESOLVED"
@@ -74,17 +80,29 @@ class MatchField(str, enum.Enum):
 
 
 class QueueType(str, enum.Enum):
-    DIRECT = "DIRECT"   # assigned to a specific agent
-    OPEN   = "OPEN"     # unassigned, in open queue
+    DIRECT = "DIRECT"  # assigned to specific agent or team
+    OPEN = "OPEN"      # unassigned, in open queue
 
 
 class RoutingStatus(str, enum.Enum):
-    SUCCESS   = "SUCCESS"     
-    AI_FAILED = "AI_FAILED" 
+
+    SUCCESS = "SUCCESS"
+    AI_FAILED = "AI_FAILED"
     ESCALATED = "ESCALATED"
+    ASSIGNING = "ASSIGNING"  # NEW: Prevents concurrent assignment
 
 
 class CustomerTier(str, enum.Enum):
     FREE = "FREE"
     STANDARD = "STANDARD"
     ENTERPRISE = "ENTERPRISE"
+
+
+class ProficiencyLevel(str, enum.Enum):
+    """
+    Agent proficiency levels for skill-based routing.
+    Used in agent_skills table.
+    """
+    BEGINNER = "beginner"
+    INTERMEDIATE = "intermediate"
+    EXPERT = "expert"

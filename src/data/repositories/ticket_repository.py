@@ -4,15 +4,16 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
+from sqlalchemy import func, select, or_
 from src.constants.enum import QueueType, RoutingStatus, TicketStatus
 from src.data.models.postgres.ticket import Ticket
+from src.data.models.postgres.ticket_comment import TicketComment
 from src.schemas.ticket_schema import TicketListFilters
 
 
 _EAGER = [
     selectinload(Ticket.attachments),
-    selectinload(Ticket.comments),
+    selectinload(Ticket.comments).selectinload(TicketComment.attachments),
     selectinload(Ticket.events),
 ]
 
@@ -40,8 +41,8 @@ class TicketRepository:
 
     async def next_ticket_number(self) -> str:
        
-        result = await self.db.execute(select(func.count(Ticket.ticket_id)))
-        count = result.scalar_one()
+        result = await self.db.execute(select(func.max(Ticket.ticket_id)))
+        count = result.scalar_one() or 0
         return f"TKT-{count + 1:04d}"
 
     async def list_for_customer(
@@ -71,8 +72,10 @@ class TicketRepository:
     async def get_escalatable(self, now: datetime) -> list[Ticket]:
         result = await self.db.execute(
             select(Ticket).where(
-                Ticket.resolution_sla_breached_at != None,   # noqa: E712
-                Ticket.response_sla_breached_at!=None,
+                or_(
+    Ticket.resolution_sla_breached_at.isnot(None),
+    Ticket.response_sla_breached_at.isnot(None)
+),
                 Ticket.escalation_level > 0, # noqa: E712
                 Ticket.status.not_in([TicketStatus.RESOLVED, TicketStatus.CLOSED]),
             )
@@ -243,14 +246,27 @@ class TicketRepository:
         return min(lead_ids, key=lambda aid: active_counts.get(aid, 0))
 
     async def get_lead_timed_out_tickets(self, cutoff: datetime) -> list[Ticket]:
-        
+        """
+        Return tickets that were routed to a lead's team queue (AI_FAILED +
+        DIRECT) but no agent has self-claimed them within the timeout window.
+
+        Key invariant: fallback tickets have assignee_id = NULL intentionally
+        (agents self-claim). The old code wrongly filtered assignee_id IS NOT NULL
+        which meant this query always returned zero rows and the timeout path
+        was silently broken.
+
+        Also fixed: the original code had fallback_assigned_at == None AND
+        fallback_assigned_at < cutoff which is a logical contradiction — both
+        conditions can never be true simultaneously. Correct filter is IS NOT NULL
+        + < cutoff.
+        """
         result = await self.db.execute(
             select(Ticket).where(
                 Ticket.routing_status == RoutingStatus.AI_FAILED.value,
                 Ticket.queue_type == QueueType.DIRECT.value,
-                Ticket.fallback_assigned_at.isnot(None),
-                Ticket.fallback_assigned_at < cutoff,
-                Ticket.assignee_id.isnot(None),
+                Ticket.fallback_assigned_at.isnot(None),   # must have been through fallback
+                Ticket.fallback_assigned_at < cutoff,       # and timed out
+                Ticket.assignee_id.is_(None),               # not yet self-claimed by an agent
                 Ticket.status.in_([
                     TicketStatus.ACKNOWLEDGED,
                     TicketStatus.OPEN,

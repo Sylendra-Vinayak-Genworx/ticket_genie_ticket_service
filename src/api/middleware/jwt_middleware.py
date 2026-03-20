@@ -1,14 +1,3 @@
-"""
-JWT Middleware — decodes the Bearer token and injects:
-    request.state.user_id   (str — UUID from Auth Service)
-    request.state.user_role (str)
-
-Public paths bypass auth entirely.
-Token is read from the Authorization header first, then from the
-?token= query parameter as a fallback (required for EventSource / SSE,
-which cannot send custom headers in the browser).
-"""
-
 import logging
 from typing import Callable
 
@@ -25,8 +14,7 @@ from src.config.settings import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Paths that never require a token
-_PUBLIC_PATHS: set[str] = {"/health", "/health/", "/docs", "/redoc", "/openapi.json"}
+_PUBLIC_PATHS: set[str] = {"/health", "/health/", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/signup"}
 _PUBLIC_PREFIXES: tuple[str, ...] = ("/docs/", "/redoc/")
 
 
@@ -46,9 +34,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if _is_public(request.url.path):
             return await call_next(request)
 
-        # Primary: Authorization header
-        # Fallback: ?token= query param — required for EventSource (SSE) which
-        # cannot send custom headers in the browser.
         token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         if not token:
             token = request.query_params.get("token", "").strip()

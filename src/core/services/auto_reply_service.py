@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import logging
@@ -17,7 +15,7 @@ logger = logging.getLogger(__name__)
 _MODEL_NAME = "llama-3.3-70b-versatile"
 
 
-# ── Data types ────────────────────────────────────────────────────────────────
+
 
 class TicketContext(BaseModel):
     """All context needed to generate any kind of draft reply."""
@@ -44,7 +42,7 @@ class ReplyMode(str, Enum):
 # ── System prompt (shared across all modes) ───────────────────────────────────
 
 _SYSTEM_PROMPT = """
-You are a professional and empathetic support assistant for a B2B SaaS platform called TicketGenie.
+You are a professional and empathetic support assistant for a B2C SaaS platform called TicketGenie.
 You write clear, concise support emails on behalf of the support team.
 
 Rules:
@@ -79,15 +77,12 @@ Update        : {event}
 """.strip()
 
 _CLARIFY_CUSTOMER_PROMPT = """
-Write a polite email to the customer asking for more information needed to resolve their ticket.
+Write a polite email to the customer asking for more information needed to resolve their support request.
 Be specific about exactly what you need. Do not ask vague questions.
+Do not mention a ticket number or status if they are empty or not yet assigned.
 
-Ticket Number    : {ticket_number}
-Ticket Title     : {ticket_title}
-Status           : {status}
-Severity         : {severity}
+Subject          : {ticket_title}
 Customer Name    : {customer_name}
-Agent Handling   : {agent_name}
 What we need     : {event}
 {history_block}
 """.strip()
@@ -207,4 +202,22 @@ def _parse_response(raw: str, ticket_number: str, ticket_title: str) -> DraftedR
 
 
 
-ai_draft_service = AIDraftService()
+# Lazy singleton — instantiated on first use so importing this module
+# never fails when GROQ_API_KEY is absent (e.g. Celery beat never calls AI).
+_ai_draft_service_instance = None
+
+
+def get_ai_draft_service():
+    global _ai_draft_service_instance
+    if _ai_draft_service_instance is None:
+        _ai_draft_service_instance = AIDraftService()
+    return _ai_draft_service_instance
+
+
+class _LazyProxy:
+    """Proxy that defers AIDraftService construction until first attribute access."""
+    def __getattr__(self, name):
+        return getattr(get_ai_draft_service(), name)
+
+
+ai_draft_service = _LazyProxy()

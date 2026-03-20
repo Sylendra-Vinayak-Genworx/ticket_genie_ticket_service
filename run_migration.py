@@ -1,18 +1,17 @@
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-
-DATABASE_URL = "postgresql+asyncpg://postgres:raja807@localhost:5432/ticketing_genie"
-
-engine = create_async_engine(DATABASE_URL)
+import asyncpg
 
 async def main():
-    async with engine.begin() as conn:
-        with open("src/data/migrations/agent_skills_migration.sql", "r") as f:
-            sql = f.read()
-        await conn.execute(text(sql))
-        print("Migration and seed script executed successfully.")
-    await engine.dispose()
+    conn = await asyncpg.connect(
+        user="sylendrar",
+        password="Iceg7#XfM1t86Ut5JYg",
+        database="ticketing_genie",
+        host="/cloudsql/gwx-internship-01:us-east1:gwx-csql-intern-01"
+    )
+    with open("/app/src/data/migrations/001.__init__.sql", "r") as f:
+        sql = f.read()
+    await conn.execute(sql)
+    await conn.close()
+    print("Migration completed successfully!")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())

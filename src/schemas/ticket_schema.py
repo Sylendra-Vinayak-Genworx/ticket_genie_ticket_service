@@ -21,13 +21,29 @@ from src.data.models.postgres.ticket_event import TicketEvent
 # ── Attachment ────────────────────────────────────────────────────────────────
 class AttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
+ 
     attachment_id: int
     ticket_id: int
     file_name: str
     file_url: str
     uploaded_by_user_id: str
     uploaded_at: datetime
+ 
+    @classmethod
+    def from_orm_signed(cls, obj) -> "AttachmentResponse":
+        """
+        Build the response from an ORM attachment, replacing the stored blob
+        path with a fresh signed URL valid for 60 minutes.
+        """
+        from src.core.services.gcs_service import generate_signed_url
+        return cls(
+            attachment_id=obj.attachment_id,
+            ticket_id=obj.ticket_id,
+            file_name=obj.file_name,
+            file_url=generate_signed_url(obj.file_url),  # obj.file_url = raw blob path
+            uploaded_by_user_id=obj.uploaded_by_user_id,
+            uploaded_at=obj.uploaded_at,
+        )
 
 
 # ── Ticket Event ──────────────────────────────────────────────────────────────
@@ -57,8 +73,25 @@ class CommentResponse(BaseModel):
     is_internal: bool
     triggers_hold: bool = False
     triggers_resume: bool = False
-    attachments: Optional[list] = None
+    attachments: list[AttachmentResponse] = Field(default_factory=list)
     created_at: datetime
+
+    @classmethod
+    def from_orm_signed(cls, obj) -> "CommentResponse":
+        """Build CommentResponse from ORM object, generating fresh signed URLs for attachments.
+        Builds from a scalar dict to avoid triggering lazy-loads in async context."""
+        scalar_dict = {
+            col: getattr(obj, col)
+            for col in obj.__class__.__table__.columns.keys()
+            if hasattr(obj, col)
+        }
+        instance = cls.model_validate(scalar_dict)
+        # Attachments are already eagerly loaded by the repository
+        raw_attachments = list(getattr(obj, "attachments", None) or [])
+        instance.attachments = [
+            AttachmentResponse.from_orm_signed(att) for att in raw_attachments
+        ]
+        return instance
 
 
 # ── Comment Create ─────────────────────────────────────────────────────────────
@@ -75,7 +108,11 @@ class CommentCreateRequest(BaseModel):
     is_internal: bool = False
     triggers_hold: bool = False
     triggers_resume: bool = False
-    ticket_id: int =Field(...)
+    ticket_id: int = Field(...)
+    attachments: list[str] = Field(
+        default_factory=list,
+        description="List of GCS blob paths (returned by /tickets/comments/attachments/upload).",
+    )
 
 
 
@@ -116,6 +153,7 @@ class TicketBriefResponse(BaseModel):
     area_of_concern: Optional[int] = None
     source: TicketSource
     customer_id: str
+    team_id: Optional[str] = None
     assignee_id: Optional[str] = None
     assigned_agent_id: Optional[int] = None
     queue_type: str = QueueType.DIRECT.value
@@ -212,6 +250,44 @@ class TicketDetailResponse(BaseModel):
     events: list[TicketEventResponse] = Field(default_factory=list)
     comments: list[CommentResponse] = Field(default_factory=list)
     attachments: list[AttachmentResponse] = Field(default_factory=list)
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs) -> "TicketDetailResponse":
+        # Build a plain dict from the ORM object, excluding relationships that
+        # may not be loaded yet (attachments, comments, events).  Pydantic's
+        # from_attributes traversal would hit SQLAlchemy's lazy-loader inside an
+        # async context and raise MissingGreenlet / ValidationError.
+        scalar_dict = {
+            col: getattr(obj, col)
+            for col in obj.__class__.__table__.columns.keys()
+            if hasattr(obj, col)
+        }
+
+        # Eagerly loaded relationships — access them directly (already in memory
+        # because the ticket_repository fetches them with selectinload).
+        raw_events       = list(getattr(obj, "events",       None) or [])
+        raw_comments     = list(getattr(obj, "comments",     None) or [])
+        raw_attachments  = list(getattr(obj, "attachments",  None) or [])
+
+        # Scalar fields only — no relationships
+        instance = super().model_validate(scalar_dict, **kwargs)
+
+        # Inject events (no signed-URL processing needed)
+        instance.events = [TicketEventResponse.model_validate(e) for e in raw_events]
+
+        # Inject ticket-level attachments with fresh signed URLs
+        instance.attachments = [
+            AttachmentResponse.from_orm_signed(att)
+            for att in raw_attachments
+            if att.comment_id is None   # ticket-level only
+        ]
+
+        # Inject comment responses with their own signed attachment URLs
+        instance.comments = [
+            CommentResponse.from_orm_signed(c) for c in raw_comments
+        ]
+
+        return instance
 
 
 # ── Filters (used by list endpoint) ───────────────────────────────────────────

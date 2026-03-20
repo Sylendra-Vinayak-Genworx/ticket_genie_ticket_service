@@ -1,11 +1,4 @@
-"""
-Shared persistent event loop for all Celery tasks.
 
-Every task module MUST use ``run_async()`` from here instead of creating
-its own ``asyncio.new_event_loop()``.  A single loop guarantees that
-pooled asyncpg connections (which are bound to the loop that created them)
-stay valid across all task invocations.
-"""
 
 import asyncio
 from typing import TypeVar

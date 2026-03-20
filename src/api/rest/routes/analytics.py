@@ -1,13 +1,3 @@
-"""
-Analytics / reporting routes.
-
-GET  /analytics/dashboard             Admin/Lead dashboard (aggregated)
-GET  /analytics/sla-compliance        SLA compliance report
-GET  /analytics/agents/{id}           Agent performance (self or admin/lead)
-GET  /analytics/customers             Customer reports (admin/lead)
-GET  /analytics/me                    Current user's own report
-"""
-
 from datetime import datetime
 from typing import Optional
 
@@ -85,7 +75,7 @@ async def get_dashboard(
     if user_role == "team_lead":
         assignee_ids = await _resolve_team_member_ids(user_id, auth)
     return await svc.get_admin_dashboard(
-        filters, current_user_role=user_role, assignee_ids=assignee_ids
+        filters, current_user_role=user_role, assignee_ids=assignee_ids, auth_client=auth
     )
 
 
@@ -115,6 +105,7 @@ async def get_sla_compliance(
 async def get_agent_performance(
     agent_user_id: str,
     svc: AnalyticsServiceDep,
+    auth: AuthClientDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
 ):
@@ -122,6 +113,7 @@ async def get_agent_performance(
         agent_user_id=agent_user_id,
         current_user_id=user_id,
         current_user_role=user_role,
+        auth_client=auth,
     )
 
 

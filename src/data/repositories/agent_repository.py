@@ -1,9 +1,4 @@
-"""
-AgentProfile repository — manages the ``agent_profiles`` table ONLY.
 
-This repository must NOT query or mutate any other table.
-Cross-table orchestration belongs in the service layer.
-"""
 
 from typing import Optional
 

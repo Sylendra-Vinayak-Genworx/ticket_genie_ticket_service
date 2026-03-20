@@ -1,12 +1,3 @@
-"""
-Keyword-rule management routes.
-
-GET    /keyword-rules          list rules (with filters & pagination)
-GET    /keyword-rules/{id}     rule detail
-POST   /keyword-rules          create rule   (LEAD / ADMIN)
-PUT    /keyword-rules/{id}     update rule   (LEAD / ADMIN)
-DELETE /keyword-rules/{id}     delete rule   (LEAD / ADMIN)
-"""
 
 from typing import Optional
 
@@ -28,7 +19,7 @@ from src.schemas.keyword_rule_schema import (
 router = APIRouter(prefix="/keyword-rules", tags=["keyword-rules"])
 
 
-# ── LIST ──────────────────────────────────────────────────────────────────────
+
 @router.get(
     "",
     response_model=PaginatedResponse[KeywordRuleResponse],
@@ -58,7 +49,6 @@ async def list_rules(
     )
 
 
-# ── DETAIL ────────────────────────────────────────────────────────────────────
 @router.get(
     "/{rule_id}",
     response_model=KeywordRuleResponse,
@@ -69,7 +59,6 @@ async def get_rule(rule_id: int, svc: KeywordRuleServiceDep):
     return KeywordRuleResponse.model_validate(rule)
 
 
-# ── CREATE ────────────────────────────────────────────────────────────────────
 @router.post(
     "",
     response_model=KeywordRuleResponse,
@@ -85,7 +74,6 @@ async def create_rule(
     return KeywordRuleResponse.model_validate(rule)
 
 
-# ── UPDATE ────────────────────────────────────────────────────────────────────
 @router.put(
     "/{rule_id}",
     response_model=KeywordRuleResponse,
@@ -101,7 +89,6 @@ async def update_rule(
     return KeywordRuleResponse.model_validate(rule)
 
 
-# ── DELETE ────────────────────────────────────────────────────────────────────
 @router.delete(
     "/{rule_id}",
     status_code=status.HTTP_204_NO_CONTENT,
