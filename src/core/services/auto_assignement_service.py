@@ -21,9 +21,7 @@ SYSTEM_ASSIGNER_ID: str = "SYSTEM"
 SYSTEM_ASSIGNER_ROLE: str = "admin"
 
 
-# ────────────────────────────────────────────────────────────────────
-# SCORING WEIGHTS
-# ────────────────────────────────────────────────────────────────────
+
 
 PROFICIENCY_WEIGHTS = {
     "expert": 100,
@@ -404,19 +402,29 @@ class AutoAssignmentService:
 
         Higher score = better match
 
-        Returns
-        -------
-        float
-            Assignment score (higher is better)
+        Notes
+        -----
+        proficiency_level is normalised to lowercase before lookup so values
+        stored as 'ADVANCED', 'Expert', 'INTERMEDIATE' etc. all resolve correctly.
+        'advanced' is treated as a synonym for 'expert' (both map to 100).
+        Unknown levels fall back to 0 (treated as unranked).
         """
-        proficiency_weight = PROFICIENCY_WEIGHTS.get(
-            agent.proficiency_level, 
-            0,
-        )
+        # Normalise: lowercase + treat 'advanced' as synonym for 'expert'
+        level = agent.proficiency_level.lower().strip()
+        if level == "advanced":
+            level = "expert"
 
-        # Fix 4: Cap experience to prevent runaway dominance over proficiency.
-        # Max contribution is EXPERIENCE_CAP * EXPERIENCE_WEIGHT = 20 * 5 = +100,
-        # which keeps it balanced against the proficiency weight range (10–100).
+        proficiency_weight = PROFICIENCY_WEIGHTS.get(level, 0)
+
+        if proficiency_weight == 0 and level not in PROFICIENCY_WEIGHTS:
+            logger.warning(
+                "Unknown proficiency level %r for agent %s — scoring as 0. "
+                "Expected one of: %s",
+                agent.proficiency_level, agent.user_id, list(PROFICIENCY_WEIGHTS.keys()),
+            )
+
+        # Cap experience to prevent runaway dominance over proficiency.
+        # Max contribution is EXPERIENCE_CAP * EXPERIENCE_WEIGHT = 50 * 5 = +250
         settings = get_settings()
         capped_experience = min(agent.tickets_resolved, settings.EXPERIENCE_CAP)
 

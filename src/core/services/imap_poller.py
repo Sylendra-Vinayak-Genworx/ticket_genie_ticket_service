@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from email.header import decode_header
 from typing import Generator
 
-from src.schemas.email_schema import EmailPayload
+from src.schemas.email_schema import EmailPayload, EmailAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,63 @@ def _normalise_message_id(raw: str) -> str:
     if not mid.endswith(">"):
         mid = f"{mid}>"
     return mid.lower()
+
+
+# ── Attachment extractor ──────────────────────────────────────────────────────
+
+_ALLOWED_ATTACHMENT_TYPES = {
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "application/pdf", "text/plain", "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _extract_attachments(msg: email.message.Message) -> list[EmailAttachment]:
+    """
+    Walk the MIME tree and return all non-inline file attachments that are
+    within the allowed content-type list and under the size limit.
+    """
+    attachments: list[EmailAttachment] = []
+    if not msg.is_multipart():
+        return attachments
+
+    for part in msg.walk():
+        content_disposition = part.get_content_disposition() or ""
+        # Only grab parts explicitly marked as attachments (skip inline images
+        # embedded in the HTML body, plain-text parts, etc.)
+        if "attachment" not in content_disposition.lower():
+            continue
+
+        content_type = part.get_content_type().lower()
+        if content_type not in _ALLOWED_ATTACHMENT_TYPES:
+            logger.debug(
+                "imap_poller: skipping attachment with disallowed type=%s", content_type
+            )
+            continue
+
+        raw = part.get_payload(decode=True)
+        if not raw:
+            continue
+        if len(raw) > _MAX_ATTACHMENT_BYTES:
+            logger.warning(
+                "imap_poller: attachment exceeds 10 MB limit (%d bytes) — skipping",
+                len(raw),
+            )
+            continue
+
+        # Decode filename
+        raw_filename = part.get_filename() or ""
+        filename = _decode(raw_filename).strip() or f"attachment.{content_type.split('/')[-1]}"
+
+        attachments.append(EmailAttachment(
+            filename=filename,
+            content_type=content_type,
+            data=raw,
+        ))
+        logger.debug("imap_poller: found attachment filename=%r type=%s size=%d", filename, content_type, len(raw))
+
+    return attachments
 
 
 # ── Poller ─────────────────────────────────────────────────────────────────────
@@ -182,6 +239,14 @@ class IMAPPoller:
                         for r in _parse_references(msg.get("References"))
                     ]
 
+                    # ── Attachments ────────────────────────────────────
+                    attachments = _extract_attachments(msg)
+                    if attachments:
+                        logger.info(
+                            "imap_poller: uid=%s has %d attachment(s)",
+                            uid, len(attachments),
+                        )
+
                     yield EmailPayload(
                         message_id=message_id,
                         in_reply_to=in_reply_to,
@@ -191,6 +256,7 @@ class IMAPPoller:
                         body_text=_plain_text(msg),
                         received_at=datetime.now(timezone.utc),
                         is_auto_reply=False,
+                        attachments=attachments,
                     )
 
                 except Exception as exc:

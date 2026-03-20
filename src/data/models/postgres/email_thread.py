@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 class EmailDirection(str, enum.Enum):
     INBOUND = "INBOUND"
+    OUTBOUND = "OUTBOUND"
 
 
 class EmailThread(Base):

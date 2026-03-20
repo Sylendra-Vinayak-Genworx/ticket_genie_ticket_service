@@ -7,11 +7,6 @@ logger = logging.getLogger(__name__)
 _original_channels = NotificationManager._channels
 
 def _patched_channels(user, ntype) -> set[str]:
-    """
-    Adapter patch: Always include 'sse' in the returned channels 
-    so the in-app notification pipeline receives the event, 
-    preserving whatever base preferences the user originally had.
-    """
     # Call the original method to get the base preferences
     channels = _original_channels(user, ntype)
     

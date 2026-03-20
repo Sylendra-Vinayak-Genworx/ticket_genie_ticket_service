@@ -1,9 +1,3 @@
-"""
-api/rest/routes/email_config_routes.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Admin-only routes for managing email configuration.
-"""
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,10 +18,6 @@ async def get_email_config(
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
 ):
-    """
-    Get current email configuration (admin only).
-    Passwords are never returned in the response.
-    """
     service = EmailConfigService(db)
     config = await service.get_config()
     
@@ -46,11 +36,7 @@ async def update_email_config(
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
 ):
-    """
-    Update email configuration (admin only).
-    Only provided fields will be updated.
-    Passwords are encrypted before storage.
-    """
+
     service = EmailConfigService(db)
     
     try:
@@ -68,10 +54,6 @@ async def initialize_email_config(
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
 ):
-    """
-    Initialize email configuration from environment variables (admin only).
-    Should only be called once during initial setup.
-    """
     service = EmailConfigService(db)
     config = await service.initialize_default_config()
     return config
@@ -83,9 +65,6 @@ async def test_email_config(
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
 ):
-    """
-    Test email configuration by sending a test email (admin only).
-    """
     service = EmailConfigService(db)
     config_dict = await service.get_decrypted_config()
     
@@ -95,8 +74,7 @@ async def test_email_config(
             detail="Email configuration not found"
         )
     
-    # TODO: Implement actual email sending test using the config
-    # For now, just return success if config exists
+
     
     return {
         "success": True,

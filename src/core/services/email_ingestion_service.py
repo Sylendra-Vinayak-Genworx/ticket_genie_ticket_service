@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import logging
@@ -14,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config.settings import get_settings
 from src.constants.enum import Environment, NotificationChannel, TicketSource, UserRole
 from src.core.services.classification_service import ClassificationService
+from src.core.services.gcs_service import upload_attachment as gcs_upload
 from src.core.services.notification.email_service import EmailNotificationService
 from src.core.services.notification.manager import notification_manager
 from src.core.services.ticket_service import TicketService
@@ -24,9 +23,10 @@ from src.data.models.postgres.ticket_comment import TicketComment
 from src.data.repositories.area_of_concern_repository import AreaOfConcernRepository
 from src.data.repositories.email_thread_repository import EmailThreadRepository
 from src.data.repositories.keyword_repository import KeywordRepository
+from src.data.repositories.ticket_attachment_repository import TicketAttachmentRepository
 from src.data.repositories.ticket_comment_repository import TicketCommentRepository
 from src.data.repositories.ticket_repository import TicketRepository
-from src.schemas.email_schema import EmailPayload, EmailTicketParseResult, _groq_async
+from src.schemas.email_schema import EmailPayload, EmailTicketParseResult, _groq_async, score_email_quality
 from src.schemas.notification_schema import TicketCreatedRequest
 from src.schemas.ticket_schema import TicketCreateRequest
 
@@ -117,6 +117,7 @@ class EmailIngestService:
         self._thread_repo = EmailThreadRepository(db)
         self._ticket_repo = TicketRepository(db)
         self._comment_repo = TicketCommentRepository(db)
+        self._attachment_repo = TicketAttachmentRepository(db)
         self._area_repo = AreaOfConcernRepository(db)
         self._ticket_svc = TicketService(db, auth_client)
         self._classifier = ClassificationService(KeywordRepository(db))
@@ -181,6 +182,7 @@ class EmailIngestService:
             ticket = await self._ticket_repo.get_by_number(ticket_number)
             if ticket:
                 return ticket.ticket_id
+        areas = await self._area_repo.get_all()
 
         return None
 
@@ -188,7 +190,7 @@ class EmailIngestService:
 
     async def _create_new_ticket(
         self, payload: EmailPayload, now: datetime
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str] | None:
         # 1. Resolve (or create) the customer — captures is_new_user flag
         customer, is_new_user, temp_password = await self._resolve_customer(
             payload.sender_email
@@ -207,7 +209,37 @@ class EmailIngestService:
             areas=areas,
         )
 
-        # 4. Always run ClassificationService against the live keyword_rules table
+        # 4. Quality gate — if the email lacks enough detail, bounce it back
+        #    asking the customer to resend with more information.  Nothing is
+        #    stored (no ticket, no thread row) so the next email is treated as
+        #    completely fresh.
+        quality = score_email_quality(
+            parsed=parsed,
+            raw_body=payload.body_text or "",
+            raw_subject=payload.subject,
+        )
+        if not quality.is_sufficient:
+            logger.info(
+                "email_ingest: insufficient detail message_id=%s missing=%s — sending clarification",
+                payload.message_id, quality.missing_fields,
+            )
+            customer_name = (
+                getattr(customer, "full_name", None)
+                or payload.sender_email.split("@")[0]
+            )
+            async with AsyncSessionFactory() as clarify_session:
+                await EmailNotificationService(clarify_session).send_clarification_request(
+                    recipient_email=payload.sender_email,
+                    customer_name=customer_name,
+                    original_message_id=payload.message_id,
+                    original_subject=payload.subject,
+                    missing_fields=quality.missing_fields,
+                )
+                await clarify_session.commit()
+            # Return None — tells the caller no ticket was created, no auto-assign needed
+            return None
+
+        # 5. Always run ClassificationService against the live keyword_rules table
         #    regardless of whether Groq succeeded or fell back.  This is the
         #    authoritative severity source — it overwrites whatever the LLM or
         #    fallback produced so admin-configured keyword rules are always respected.
@@ -222,7 +254,13 @@ class EmailIngestService:
             parsed.area_of_concern_name, parsed.area_of_concern_id,
         )
 
-        # 5. Create ticket — area_of_concern_id resolved by Pydantic, severity by ClassificationService
+        # 5. Upload any MIME attachments to GCS before creating the ticket
+        attachment_blob_paths = await self._upload_email_attachments(
+            payload,
+            folder=f"tickets/email/{customer.id}",
+        )
+
+        # 6. Create ticket — area_of_concern_id resolved by Pydantic, severity by ClassificationService
         ticket = await self._ticket_svc.create_ticket(
             payload=TicketCreateRequest(
                 title=parsed.title,
@@ -231,7 +269,7 @@ class EmailIngestService:
                 environment=Environment.PROD,
                 source=TicketSource.EMAIL,
                 area_of_concern=parsed.area_of_concern_id,
-                attachments=[],
+                attachments=attachment_blob_paths,
             ),
             current_user_id=customer.id,
             
@@ -310,7 +348,14 @@ class EmailIngestService:
 
         clean_body = self._strip_reply_quotes(payload.body_text or payload.subject)
 
-        await self._comment_repo.add(TicketComment(
+        # Upload any MIME attachments to GCS, reusing the same gcs_upload
+        # function as the REST endpoint — returns blob paths stored in DB.
+        attachment_blob_paths = await self._upload_email_attachments(
+            payload,
+            folder=f"comments/email/{customer.id}",
+        )
+
+        saved_comment = await self._comment_repo.add(TicketComment(
             ticket_id=ticket_id,
             author_id=customer.id,
             author_role=UserRole.CUSTOMER.value,
@@ -319,6 +364,18 @@ class EmailIngestService:
             triggers_hold=False,
             triggers_resume=False,
         ))
+
+        # Persist each attachment linked to this comment — same model/repo
+        # as used by the REST comment-attachment upload endpoint.
+        from src.data.models.postgres.ticket_attachment import TicketAttachment
+        for blob_path in attachment_blob_paths:
+            await self._attachment_repo.add(TicketAttachment(
+                ticket_id=ticket_id,
+                comment_id=saved_comment.comment_id,
+                file_name=blob_path.split("/")[-1],
+                file_url=blob_path,
+                uploaded_by_user_id=customer.id,
+            ))
 
         await self._thread_repo.add(EmailThread(
             ticket_id=ticket_id,
@@ -333,8 +390,8 @@ class EmailIngestService:
         ))
 
         logger.info(
-            "email_ingest: added comment to ticket_id=%s from=%s first_reply=%s",
-            ticket_id, payload.sender_email, is_first_reply,
+            "email_ingest: added comment to ticket_id=%s from=%s first_reply=%s attachments=%d",
+            ticket_id, payload.sender_email, is_first_reply, len(attachment_blob_paths),
         )
 
         if is_first_reply:
@@ -363,6 +420,38 @@ class EmailIngestService:
                     ticket_id,
                 )
 
+    # ── Attachment upload ─────────────────────────────────────────────────────
+
+    async def _upload_email_attachments(
+        self,
+        payload,
+        folder: str,
+    ) -> list[str]:
+        """
+        Upload all EmailPayload attachments to GCS and return their blob paths.
+        Reuses gcs_upload (same function used by the REST upload endpoints).
+        Failures are logged and skipped — never block ticket/comment creation.
+        """
+        blob_paths: list[str] = []
+        for att in (payload.attachments or []):
+            try:
+                blob_path = gcs_upload(
+                    file_bytes=att.data,
+                    filename=att.filename,
+                    folder=folder,
+                )
+                blob_paths.append(blob_path)
+                logger.info(
+                    "email_ingest: uploaded attachment filename=%r blob=%s",
+                    att.filename, blob_path,
+                )
+            except Exception:
+                logger.exception(
+                    "email_ingest: failed to upload attachment filename=%r — skipping",
+                    att.filename,
+                )
+        return blob_paths
+
     # ── Customer resolution ───────────────────────────────────────────────────
 
     async def _resolve_customer(
@@ -372,20 +461,6 @@ class EmailIngestService:
         Look up the sender in Auth Service by email.
 
         Returns (user_dto, is_new_user, temp_password).
-
-        NEW USER PATH
-        ─────────────
-        If the email is not registered, create a full customer account via
-        the Auth Service admin/users endpoint (same endpoint as admin-created
-        staff accounts).  A temporary password is generated, stored in the
-        return value so the caller can include it in the credentials email,
-        and the account is created with role='user'.
-
-        EXISTING USER PATH
-        ──────────────────
-        Returns (user_dto, False, None).
-
-        Raises on network failure — the Celery task handles retry.
         """
         settings = get_settings()
         base = settings.auth_service_url.rstrip("/")

@@ -1,21 +1,3 @@
-"""
-SLA + SLA-Rule management routes.
-
-SLA:
-  GET    /sla-rules                list SLAs (with filters & pagination)
-  GET    /sla-rules/{id}           SLA detail (incl. nested rules)
-  POST   /sla-rules                create SLA     (LEAD / ADMIN)
-  PUT    /sla-rules/{id}           update SLA     (LEAD / ADMIN)
-  DELETE /sla-rules/{id}           delete SLA     (LEAD / ADMIN)
-
-SLA Rule (nested):
-  GET    /sla-rules/{sla_id}/rules            list rules for an SLA
-  GET    /sla-rules/rules/{rule_id}           single rule detail
-  POST   /sla-rules/{sla_id}/rules            create rule   (LEAD / ADMIN)
-  PUT    /sla-rules/rules/{rule_id}           update rule   (LEAD / ADMIN)
-  DELETE /sla-rules/rules/{rule_id}           delete rule   (LEAD / ADMIN)
-"""
-
 from typing import Optional
 
 from fastapi import APIRouter, Query, status

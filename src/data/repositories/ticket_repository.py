@@ -7,12 +7,13 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, or_
 from src.constants.enum import QueueType, RoutingStatus, TicketStatus
 from src.data.models.postgres.ticket import Ticket
+from src.data.models.postgres.ticket_comment import TicketComment
 from src.schemas.ticket_schema import TicketListFilters
 
 
 _EAGER = [
     selectinload(Ticket.attachments),
-    selectinload(Ticket.comments),
+    selectinload(Ticket.comments).selectinload(TicketComment.attachments),
     selectinload(Ticket.events),
 ]
 

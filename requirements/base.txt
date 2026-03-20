@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-sqlalchemy
-asyncpg
-pydantic-settings
-structlog
-python-json-logger
-alembic

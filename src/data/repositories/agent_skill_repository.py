@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 from sqlalchemy.orm import selectinload
 from src.data.models.postgres.agent_skill import AgentSkill
 from src.data.models.postgres.area_of_concern import AreaOfConcern
@@ -25,8 +25,16 @@ class AgentSkillRepository:
 
     async def delete_by_user_id(self, user_id: str) -> None:
         await self.db.execute(delete(AgentSkill).where(AgentSkill.user_id == user_id))
+        await self.db.flush()
+
+    async def _reset_sequence(self) -> None:
+        """Reset the agent_skills primary key sequence to avoid duplicate key errors."""
+        await self.db.execute(
+            text("SELECT setval('agent_skills_agent_skill_id_seq', COALESCE((SELECT MAX(agent_skill_id) FROM agent_skills), 0))")
+        )
 
     async def bulk_create(self, user_id: str, skills_data: list[dict]) -> None:
+        await self._reset_sequence()
         for skill_data in skills_data:
             self.db.add(AgentSkill(
                 user_id=user_id,

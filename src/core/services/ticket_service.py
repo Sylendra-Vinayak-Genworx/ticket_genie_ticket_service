@@ -585,6 +585,17 @@ class TicketService:
             triggers_resume=comment.triggers_resume,
         ))
 
+        # Persist any images/files uploaded alongside this comment
+        for blob_path in (comment.attachments or []):
+            clean = blob_path.split("?")[0]  # strip any signed-URL query params
+            await self._attachment_repo.add(TicketAttachment(
+                ticket_id=comment.ticket_id,
+                comment_id=saved.comment_id,   # ← links attachment to this comment
+                file_name=clean.split("/")[-1],
+                file_url=clean,
+                uploaded_by_user_id=current_user_id,
+            ))
+
         # Internal notes never trigger notifications
         if comment.is_internal:
             return saved

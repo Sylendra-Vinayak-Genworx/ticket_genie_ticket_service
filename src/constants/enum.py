@@ -85,20 +85,7 @@ class QueueType(str, enum.Enum):
 
 
 class RoutingStatus(str, enum.Enum):
-    """
-    Ticket routing status in the assignment pipeline.
-    
-    Values
-    ------
-    SUCCESS : str
-        Ticket successfully assigned to an agent (assignee_id set)
-    AI_FAILED : str
-        AI/skill-based routing failed, ticket in team queue or OPEN
-    ESCALATED : str
-        Ticket escalated to lead's team due to SLA breach
-    ASSIGNING : str
-        Ticket currently being assigned (atomic lock to prevent races)
-    """
+
     SUCCESS = "SUCCESS"
     AI_FAILED = "AI_FAILED"
     ESCALATED = "ESCALATED"

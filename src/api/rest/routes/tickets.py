@@ -23,12 +23,6 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
 def _enqueue_auto_assign(ticket_id: int, ticket_title: str) -> None:
-    """
-    Thin wrapper so BackgroundTasks can call this after the HTTP response
-    is sent (i.e. after get_db() has committed the transaction).
-    By the time this runs the ticket row is guaranteed to be visible to
-    the Celery worker's independent DB session.
-    """
     import logging
     from src.core.tasks.assignment_task import auto_assign_ticket
     auto_assign_ticket.delay(ticket_id=ticket_id, ticket_title=ticket_title)
@@ -200,10 +194,6 @@ async def update_ticket_status(
     summary="Add a comment to a ticket",
     description=(
         "Post a comment. Agents/leads/admins can pass special flags:\n\n"
-        "- **triggers_hold=true** → ticket transitions to **ON_HOLD**, SLA timer **pauses**.\n"
-        "- **triggers_resume=true** → ticket transitions to **IN_PROGRESS**, SLA timer **resumes**.\n\n"
-        "Both flags cannot be true simultaneously. "
-        "Plain comments (both false) are allowed by all roles."
     ),
 )
 async def add_comment(
@@ -217,7 +207,7 @@ async def add_comment(
         current_user_id=user_id,
         current_user_role=user_role,
     )
-    return CommentResponse.model_validate(comment)
+    return CommentResponse.from_orm_signed(comment)
 
 
 @router.post(
@@ -241,12 +231,66 @@ async def assign_ticket(
 
 
 @router.post(
+    "/comments/attachments/upload",
+    summary="Upload a comment image/attachment to GCS",
+    description=(
+        "Upload an image or file to attach to a comment. "
+    ),
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_comment_attachment(
+    file: UploadFile = File(...),
+    user_id: CurrentUserID = None,
+):
+    from src.core.services.gcs_service import upload_attachment as gcs_upload, generate_signed_url
+
+    _ALLOWED_TYPES = {
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+        "application/pdf", "text/plain", "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+    if file.content_type not in _ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                f"File type '{file.content_type}' is not allowed. "
+                f"Accepted: {sorted(_ALLOWED_TYPES)}"
+            ),
+        )
+
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File exceeds the 10 MB limit.",
+        )
+
+    try:
+        blob_path = gcs_upload(
+            file_bytes=contents,
+            filename=file.filename or "attachment",
+            folder=f"comments/pending/{user_id}",
+        )
+        signed_url = generate_signed_url(blob_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GCS upload failed: {exc}",
+        )
+
+    return {
+        "file_name": file.filename,
+        "file_url":  signed_url,
+        "blob_path": blob_path,
+    }
+
+
+@router.post(
     "/attachments/upload",
     summary="Upload a ticket attachment to GCS",
     description=(
         "Upload a file before (or after) creating a ticket. "
-        "Returns `file_name` and `file_url` (a signed GCS URL valid for 60 minutes). "
-        "Pass `file_url` inside `attachments[]` when calling POST /tickets."
+ 
     ),
     status_code=status.HTTP_201_CREATED,
 )
@@ -295,6 +339,6 @@ async def upload_attachment(
 
     return {
         "file_name": file.filename,
-        "file_url":  signed_url,   # frontend passes this into TicketCreateRequest.attachments[]
-        "blob_path": blob_path,    # store this in the DB — use it to re-generate signed URLs on read
+        "file_url":  signed_url,  
+        "blob_path": blob_path,    
     }

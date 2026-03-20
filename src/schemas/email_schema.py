@@ -126,6 +126,90 @@ _QUOTED_LINE_RE = re.compile(
 )
 
 
+# ── Email quality scoring ─────────────────────────────────────────────────────
+
+# Generic subjects that carry no useful signal
+_VAGUE_SUBJECTS = {
+    "help", "issue", "problem", "not working", "broken", "error",
+    "urgent", "asap", "question", "query", "support", "hi", "hello",
+    "request", "ticket", "bug", "need help", "please help",
+}
+
+# Phrases that suggest a real error description is present
+_DETAIL_SIGNALS = [
+    r"error\s*(code|message|:)",
+    r"\d{3,}",          # error codes like 500, 404, NullPointerException line numbers
+    r"step[s]?\s*(to|i)",
+    r"when\s+i",
+    r"after\s+i",
+    r"stack\s*trace",
+    r"exception",
+    r"cannot\s+login",
+    r"fails?\s+to",
+    r"screenshot",
+]
+_DETAIL_RE = re.compile("|".join(_DETAIL_SIGNALS), re.IGNORECASE)
+
+
+class QualityVerdict:
+    """Result of _score_email_quality()."""
+    __slots__ = ("is_sufficient", "missing_fields", "clarification_hint")
+
+    def __init__(self, is_sufficient: bool, missing_fields: list[str], clarification_hint: str) -> None:
+        self.is_sufficient      = is_sufficient
+        self.missing_fields     = missing_fields
+        self.clarification_hint = clarification_hint   # injected into CLARIFY prompt as `event`
+
+
+def score_email_quality(
+    parsed: "EmailTicketParseResult",
+    raw_body: str,
+    raw_subject: str,
+) -> QualityVerdict:
+    """
+    Heuristic quality gate for inbound emails.
+
+    Returns QualityVerdict(is_sufficient=False) when the email lacks enough
+    information for an agent to act on it — triggering a CLARIFY_CUSTOMER
+    response instead of routing directly to an agent.
+
+    Checks (all must pass):
+      1. Description is at least 20 words
+      2. Subject is not one of the known vague single-word phrases
+      3. Body contains at least one detail signal (error code, steps, "when I…")
+         OR description is long enough (>= 50 words) to be self-explanatory
+    """
+    missing: list[str] = []
+    word_count = len((raw_body or "").split())
+
+    # 1. Too short
+    if word_count < 20:
+        missing.append("a description of the problem (your email is very brief)")
+
+    # 2. Vague subject — only flag if subject is a single generic word with no
+    #    other context in the body
+    subject_clean = re.sub(r"\[TKT-\d+\]", "", raw_subject).strip().lower()
+    if (subject_clean in _VAGUE_SUBJECTS or len(subject_clean) < 5) and word_count < 20:
+        missing.append("a clear subject line that describes your issue")
+
+    # 3. No error detail (skip if description is already rich)
+    if word_count < 50 and not _DETAIL_RE.search(raw_body or ""):
+        missing.append(
+            "details about the error — for example: what you were doing when it happened, "
+            "any error messages or codes you saw, and the steps to reproduce it"
+        )
+
+    if not missing:
+        return QualityVerdict(is_sufficient=True, missing_fields=[], clarification_hint="")
+
+    hint = (
+        "To help us resolve your ticket quickly, we need a bit more information:\n"
+        + "\n".join(f"  • {m}" for m in missing)
+    )
+    return QualityVerdict(is_sufficient=False, missing_fields=missing, clarification_hint=hint)
+
+
+
 # ── EmailTicketParseResult ────────────────────────────────────────────────────
 
 class EmailTicketParseResult(BaseModel):
@@ -384,19 +468,29 @@ def _fallback_parse(
 
 # ── Inbound email payload (produced by IMAP poller) ──────────────────────────
 
+class EmailAttachment(BaseModel):
+    """A single attachment extracted from an inbound MIME email."""
+    filename:     str
+    content_type: str
+    data:         bytes   # raw bytes — uploaded to GCS by EmailIngestService
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
 class EmailPayload(BaseModel):
     """
     Raw inbound email as produced by IMAPPoller.
     Pydantic validators normalise fields before EmailIngestService sees them.
     """
-    message_id:    str           = Field(..., description="RFC 2822 Message-ID — globally unique per email")
-    in_reply_to:   Optional[str] = Field(default=None)
-    references:    list[str]     = Field(default_factory=list)
+    message_id:    str                    = Field(..., description="RFC 2822 Message-ID — globally unique per email")
+    in_reply_to:   Optional[str]          = Field(default=None)
+    references:    list[str]              = Field(default_factory=list)
     subject:       str
     sender_email:  str
-    body_text:     Optional[str] = None
+    body_text:     Optional[str]          = None
     received_at:   datetime
-    is_auto_reply: bool          = False
+    is_auto_reply: bool                   = False
+    attachments:   list["EmailAttachment"] = Field(default_factory=list)
 
     @field_validator("message_id")
     @classmethod
@@ -439,7 +533,5 @@ class EmailPayload(BaseModel):
         return v.strip() if v else None
 
 
-# ── Backward-compatibility alias ──────────────────────────────────────────────
-# Some older callers import ParsedEmailContent — alias to the new class so
-# nothing breaks during a rolling deploy.
+
 ParsedEmailContent = EmailTicketParseResult

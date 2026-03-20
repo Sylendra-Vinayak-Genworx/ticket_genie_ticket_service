@@ -1,13 +1,3 @@
-"""
-Analytics / reporting routes.
-
-GET  /analytics/dashboard             Admin/Lead dashboard (aggregated)
-GET  /analytics/sla-compliance        SLA compliance report
-GET  /analytics/agents/{id}           Agent performance (self or admin/lead)
-GET  /analytics/customers             Customer reports (admin/lead)
-GET  /analytics/me                    Current user's own report
-"""
-
 from datetime import datetime
 from typing import Optional
 

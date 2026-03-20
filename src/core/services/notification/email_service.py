@@ -1,47 +1,19 @@
-"""
-core/services/notification/email_service.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Email notification service — reads SMTP config from database,
-falls back to env if database config is not available.
-
-Outbound email triggers
-───────────────────────
-Ticket lifecycle (existing):
-  send_ticket_created     — customer: ticket logged
-  send_status_changed     — customer: status update (AI-drafted)
-  send_agent_comment      — customer: agent replied (AI-drafted)
-  send_customer_comment   — agent:    customer replied
-  send_ticket_assigned    — agent:    ticket assigned (AI-drafted)
-  send_sla_breached       — lead:     SLA breach alert (AI-drafted)
-  send_auto_closed        — customer: ticket auto-closed
-
-Email ingest pipeline (new):
-  send_ticket_ack         — customer: ACK on new ticket created via email
-                            threads correctly via In-Reply-To so the reply
-                            lands in the same mail thread
-  send_continue_in_ui     — customer: first reply received, include portal
-                            link so they can switch to the richer UI
-
-All outbound sends share the same _ensure_config → _deliver → _smtp_send
-pipeline so SMTP config, delivery logging, and error handling are
-consistent across every trigger.
-"""
-
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import smtplib
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import make_msgid
 from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import get_settings
 from src.constants.enum import EventType, NotificationChannel, NotificationStatus
-from src.core.services.auto_reply_service import AIDraftService, ReplyMode, TicketContext
 from src.core.services.email_config_service import EmailConfigService
 from src.schemas.notification_schema import (
     AgentCommentRequest,
@@ -54,10 +26,28 @@ from src.schemas.notification_schema import (
 )
 from src.data.models.postgres.notification_log import NotificationLog
 from src.data.repositories.notification_log_repository import NotificationLogRepository
+from src.data.models.postgres.email_thread import EmailThread, EmailDirection
+from src.data.repositories.email_thread_repository import EmailThreadRepository
 
 logger = logging.getLogger(__name__)
 
-_ai_draft = AIDraftService()
+# All symbols from auto_reply_service are imported lazily inside _get_ai_draft()
+# and the helpers below to avoid a circular import at module load time.
+# (email_service → auto_reply_service → notification/manager → email_service)
+
+def _get_ai_draft():
+    from src.core.services.auto_reply_service import get_ai_draft_service
+    return get_ai_draft_service()
+
+
+def _reply_mode():
+    from src.core.services.auto_reply_service import ReplyMode
+    return ReplyMode
+
+
+def _ticket_context(**kwargs):
+    from src.core.services.auto_reply_service import TicketContext
+    return TicketContext(**kwargs)
 
 
 # ── HTML / text templates for ingest-pipeline outbound emails ─────────────────
@@ -182,6 +172,7 @@ class EmailNotificationService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
         self._repo = NotificationLogRepository(db)
+        self._thread_repo = EmailThreadRepository(db)
         self._config: dict | None = None
 
     async def _ensure_config(self) -> dict:
@@ -254,9 +245,9 @@ class EmailNotificationService:
         self, req: StatusChangedRequest, recipient_email: str, customer_name: str
     ) -> None:
         config = await self._ensure_config()
-        draft = await _ai_draft.draft(
-            mode=ReplyMode.NOTIFY_CUSTOMER,
-            context=TicketContext(
+        draft = await _get_ai_draft().draft(
+            mode=_reply_mode().NOTIFY_CUSTOMER,
+            context=_ticket_context(
                 ticket_number=req.ticket_number,
                 ticket_title=req.ticket_title,
                 status=req.new_status,
@@ -280,9 +271,9 @@ class EmailNotificationService:
         self, req: AgentCommentRequest, recipient_email: str, customer_name: str
     ) -> None:
         config = await self._ensure_config()
-        draft = await _ai_draft.draft(
-            mode=ReplyMode.NOTIFY_CUSTOMER,
-            context=TicketContext(
+        draft = await _get_ai_draft().draft(
+            mode=_reply_mode().NOTIFY_CUSTOMER,
+            context=_ticket_context(
                 ticket_number=req.ticket_number,
                 ticket_title=req.ticket_title,
                 status=req.status,
@@ -329,9 +320,9 @@ class EmailNotificationService:
         self, req: TicketAssignedRequest, recipient_email: str, agent_name: str
     ) -> None:
         config = await self._ensure_config()
-        draft = await _ai_draft.draft(
-            mode=ReplyMode.NOTIFY_AGENT,
-            context=TicketContext(
+        draft = await _get_ai_draft().draft(
+            mode=_reply_mode().NOTIFY_AGENT,
+            context=_ticket_context(
                 ticket_number=req.ticket_number,
                 ticket_title=req.ticket_title,
                 status=req.status,
@@ -355,9 +346,9 @@ class EmailNotificationService:
         self, req: SLABreachedRequest, recipient_email: str, lead_name: str
     ) -> None:
         config = await self._ensure_config()
-        draft = await _ai_draft.draft(
-            mode=ReplyMode.NOTIFY_AGENT,
-            context=TicketContext(
+        draft = await _get_ai_draft().draft(
+            mode=_reply_mode().NOTIFY_AGENT,
+            context=_ticket_context(
                 ticket_number=req.ticket_number,
                 ticket_title=req.ticket_title,
                 status=req.status,
@@ -414,12 +405,6 @@ class EmailNotificationService:
         ticket_number: str,
         original_message_id: str,
     ) -> None:
-        """
-        ACK sent immediately after a new ticket is created from an inbound email.
-
-        Sets In-Reply-To / References pointing at the customer's original
-        message so this ACK lands in the same mail thread in their client.
-        """
         config = await self._ensure_config()
         from_name = config.get("smtp_from_name", "Support Team")
 
@@ -462,12 +447,7 @@ class EmailNotificationService:
         ticket_number: str,
         original_message_id: str,
     ) -> None:
-        """
-        Sent after the customer's first email reply on a ticket.
 
-        Includes a direct link to the ticket in the web portal so they can
-        switch to the richer UI for subsequent messages.
-        """
         from src.utils.portal_token import generate_portal_token
 
         config = await self._ensure_config()
@@ -508,6 +488,75 @@ class EmailNotificationService:
             recipient_email, ticket_number, ticket_url,
         )
 
+    async def send_clarification_request(
+        self,
+        *,
+        recipient_email: str,
+        customer_name: str,
+        original_message_id: str,
+        original_subject: str,
+        missing_fields: list[str],
+    ) -> None:
+
+        config = await self._ensure_config()
+
+        missing_bullet_list = "\n".join(f"  • {m}" for m in missing_fields)
+        event_text = (
+            "We received your support request but need a bit more detail before we "
+            "can create a ticket and assign it to an agent.\n\n"
+            f"Please send us a new email with the following information:\n{missing_bullet_list}"
+        )
+
+        draft = await _get_ai_draft().draft(
+            mode=_reply_mode().CLARIFY_CUSTOMER,
+            context=_ticket_context(
+                ticket_number="",
+                ticket_title=original_subject,
+                status="",
+                severity="MEDIUM",
+                customer_name=customer_name,
+                agent_name=None,
+            ),
+            event=event_text,
+        )
+
+        # Strip the subject from AI — use a clean Re: of the original instead.
+        # The LLM tends to invent unhelpful subjects like "Ticket Number Not Assigned".
+        clean_original = re.sub(r"^(re|fwd?):\s*", "", original_subject, flags=re.IGNORECASE).strip()
+        subject = f"Re: {clean_original}"
+
+        # No ticket exists yet — call _smtp_send directly so we don't write
+        # a NotificationLog row with a NULL/invalid ticket_id FK.
+        smtp_cfg = config
+        outbound_domain = smtp_cfg.get("smtp_user", "support@ticketgenie.ai").split("@")[-1]
+        from email.utils import make_msgid as _make_msgid
+        outbound_mid = _make_msgid(domain=outbound_domain)
+        if smtp_cfg.get("smtp_user"):
+            import asyncio as _asyncio
+            from functools import partial as _partial
+            loop = _asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                _partial(
+                    self._smtp_send,
+                    config=smtp_cfg,
+                    to=recipient_email,
+                    subject=subject,
+                    body=draft.body,
+                    message_id=outbound_mid,
+                    in_reply_to=original_message_id,
+                    references=original_message_id,
+                ),
+            )
+        else:
+            logger.info(
+                "email_service [DEV]: clarify to=%s subject=%r\n%s",
+                recipient_email, subject, draft.body,
+            )
+        logger.info(
+            "email_service: sent clarification request to=%s subject=%r missing=%s",
+            recipient_email, original_subject, missing_fields,
+        )
 
     async def _deliver(
         self,
@@ -522,16 +571,13 @@ class EmailNotificationService:
         in_reply_to: str | None = None,
         references: str | None = None,
     ) -> None:
-        """
-        Build the MIME message, send it, and write a NotificationLog row.
-
-        html_body   — when supplied the message is multipart/alternative
-                      (HTML + plain-text fallback); otherwise plain-text only.
-        in_reply_to — RFC 2822 In-Reply-To header value (for threading).
-        references  — RFC 2822 References header value (for threading).
-        """
+   
         now = datetime.now(timezone.utc)
         status = NotificationStatus.PENDING
+
+     
+        smtp_domain = config.get("smtp_user", "support@ticketgenie.ai").split("@")[-1]
+        outbound_message_id = make_msgid(domain=smtp_domain)
 
         try:
             if config.get("smtp_user"):
@@ -547,6 +593,7 @@ class EmailNotificationService:
                         html_body=html_body,
                         in_reply_to=in_reply_to,
                         references=references,
+                        message_id=outbound_message_id,
                     ),
                 )
             else:
@@ -571,6 +618,28 @@ class EmailNotificationService:
             sent_at=now if status == NotificationStatus.SENT else None,
         ))
 
+        # Record the outbound email in email_threads so that when the customer
+        # replies, _find_existing_ticket can match their In-Reply-To header to
+        # this message_id and route the reply to the correct ticket.
+        if status == NotificationStatus.SENT:
+            try:
+                await self._thread_repo.add(EmailThread(
+                    ticket_id=ticket_id,
+                    message_id=outbound_message_id,
+                    in_reply_to=in_reply_to,
+                    raw_subject=subject,
+                    sender_email=config.get("smtp_user", ""),
+                    direction=EmailDirection.OUTBOUND,
+                    raw_body_text=body,
+                    received_at=now,
+                    processed_at=now,
+                ))
+            except Exception:
+                logger.exception(
+                    "email_service: failed to record outbound thread row "
+                    "ticket_id=%s — email was still sent", ticket_id
+                )
+
     def _smtp_send(
         self,
         *,
@@ -581,12 +650,13 @@ class EmailNotificationService:
         html_body: str | None = None,
         in_reply_to: str | None = None,
         references: str | None = None,
+        message_id: str | None = None,
     ) -> None:
         """
         Sync SMTP send — called via run_in_executor so it never blocks the loop.
 
         Builds a multipart/alternative message always (plain-text + optional HTML).
-        Threading headers (In-Reply-To, References) are set when provided.
+        Threading headers (Message-ID, In-Reply-To, References) are set when provided.
 
         Port 465 → implicit SSL (SMTP_SSL).
         Port 587 or any other → STARTTLS (SMTP + starttls).
@@ -600,6 +670,8 @@ class EmailNotificationService:
         msg["From"]    = f"{config.get('smtp_from_name', 'Support Team')} <{config['smtp_user']}>"
         msg["To"]      = to
 
+        if message_id:
+            msg["Message-ID"] = message_id
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
         if references:
