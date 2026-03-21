@@ -77,14 +77,6 @@ async def _detect_sla_breaches_async() -> None:
         def _resolve_lead(ticket) -> tuple[str | None, str | None]:
             """
             For a ticket, find the best lead to notify.
-
-            Priority:
-              1. The assignee's own lead_id (from auth data fetched above).
-              2. Any lead that shares the ticket's team_id.
-              3. First available lead.
-
-            Returns (lead_id, lead_team_id).
-            Never returns the current assignee as the lead.
             """
             if not lead_ids:
                 return None, None

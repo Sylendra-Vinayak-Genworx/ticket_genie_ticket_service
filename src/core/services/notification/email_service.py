@@ -31,9 +31,7 @@ from src.data.repositories.email_thread_repository import EmailThreadRepository
 
 logger = logging.getLogger(__name__)
 
-# All symbols from auto_reply_service are imported lazily inside _get_ai_draft()
-# and the helpers below to avoid a circular import at module load time.
-# (email_service → auto_reply_service → notification/manager → email_service)
+
 
 def _get_ai_draft():
     from src.core.services.auto_reply_service import get_ai_draft_service

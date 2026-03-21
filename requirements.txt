@@ -60,3 +60,6 @@ xxhash==3.6.0
 zstandard==0.25.0
 google-cloud-storage
 google-auth
+langchain 
+langchain-community 
+sentence-transformers

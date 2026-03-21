@@ -24,6 +24,7 @@ from src.api.rest.routes.agent_skills import router as agent_skills_router
 import src.data.models.postgres
 from src.api.rest.routes.email_config_routes import router as email_config_router
 from src.api.rest.routes.product_routes import router as product_router
+from src.api.rest.routes.similarity_routes import router as similarity_router
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
@@ -61,4 +62,5 @@ def create_app() -> FastAPI:
     app.include_router(agent_skills_router)
     app.include_router(email_config_router)
     app.include_router(product_router)
+    app.include_router(similarity_router)
     return app

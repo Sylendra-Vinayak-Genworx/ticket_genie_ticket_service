@@ -202,8 +202,6 @@ def _parse_response(raw: str, ticket_number: str, ticket_title: str) -> DraftedR
 
 
 
-# Lazy singleton — instantiated on first use so importing this module
-# never fails when GROQ_API_KEY is absent (e.g. Celery beat never calls AI).
 _ai_draft_service_instance = None
 
 
