@@ -12,7 +12,7 @@ from src.schemas.email_config_schema import (
 
 router = APIRouter(prefix="/admin/email-config", tags=["Email Configuration"])
 
-
+"""Endpoints for managing email configuration settings, such as SMTP server details, credentials, etc. Only accessible by admins."""
 @router.get("", response_model=EmailConfigResponse)
 async def get_email_config(
     db: AsyncSession = Depends(get_db),

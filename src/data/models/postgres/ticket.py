@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class Ticket(Base):
-
+    """Represents a support ticket in the system. Contains all relevant information about the ticket, including its title, description, product, environment, severity, priority, status, and associated customer and assignee details. The model also tracks SLA deadlines and timestamps for response and resolution, as well as escalation levels and history. Relationships are defined to link the ticket to its attachments, comments, events, email threads, escalation history, and notification logs."""
     __tablename__ = "tickets"
 
     ticket_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

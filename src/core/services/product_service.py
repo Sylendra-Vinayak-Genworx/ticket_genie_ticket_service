@@ -8,7 +8,7 @@ from src.core.exceptions.base import NotFoundError, ConflictError
 class ProductService:
     def __init__(self, session: AsyncSession) -> None:
         self._repo = ProductRepository(session)
-
+    """Service layer for managing products. Provides methods to list, get, create, update, and delete products. Each product represents a specific software product or service that tickets can be associated with. The service interacts with the ProductRepository to perform database operations and includes business logic such as checking for duplicate product names during creation and updates."""
     async def list_products(self, active_only: bool = False) -> list[Product]:
         return await self._repo.list_all(active_only=active_only)
 

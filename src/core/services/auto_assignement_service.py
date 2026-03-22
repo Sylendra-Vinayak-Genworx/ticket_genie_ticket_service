@@ -57,10 +57,6 @@ class AutoAssignmentService:
         self._ticket_svc = TicketService(session, auth_client)
         self._auth = auth_client
 
-    # ────────────────────────────────────────────────────────────────────
-    # PUBLIC API
-    # ────────────────────────────────────────────────────────────────────
-
     async def assign(
         self, 
         ticket_id: int, 

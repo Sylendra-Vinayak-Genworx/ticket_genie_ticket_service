@@ -6,7 +6,7 @@ from src.schemas.agent_skill_schema import AgentSkillListResponse, AgentSkillUpd
 class AgentSkillService:
     def __init__(self, repo: AgentSkillRepository):
         self.repo = repo
-
+    """Service layer for managing agent skills. Provides methods to get and update an agent's skills, which include the skill area and proficiency level. The service interacts with the AgentSkillRepository to perform database operations and includes business logic such as validating skill area IDs during updates."""
     def _format_skills(self, skills) -> list[dict]:
         return [
             {

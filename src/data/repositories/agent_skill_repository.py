@@ -6,9 +6,10 @@ from src.data.models.postgres.area_of_concern import AreaOfConcern
 
 
 class AgentSkillRepository:
+
     def __init__(self, db: AsyncSession):
         self.db = db
-
+    """Repository for managing agent skills. Provides methods to retrieve, update, and delete agent skills based on user ID. Also includes methods to check for existing areas of concern and to bulk create new agent skill records. The repository interacts with the database using SQLAlchemy's AsyncSession and is designed to be used by the AgentSkillService for business logic related to agent skill management."""
     async def get_by_user_id(self, user_id: str) -> list[AgentSkill]:
         stmt = (
             select(AgentSkill)

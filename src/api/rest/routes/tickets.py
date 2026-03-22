@@ -30,7 +30,7 @@ def _enqueue_auto_assign(ticket_id: int, ticket_title: str) -> None:
         "auto_assign_ticket: enqueued post-commit for ticket_id=%s", ticket_id
     )
 
-
+"""Ticket-related endpoints: create ticket, get my tickets, get ticket detail, update status, add comment, assign ticket, upload attachments, self-escalation, etc."""
 @router.post(
     "",
     response_model=TicketDetailResponse,
@@ -49,7 +49,7 @@ async def create_ticket(
     )
     return TicketDetailResponse.model_validate(ticket)
 
-
+"""Get my tickets with optional filters. The results are role-aware: customers see their own raised tickets, agents see tickets assigned to them, leads/admins see all tickets. Supports filtering by status, severity, priority, breach/escalation/unassigned flags, queue type, etc., and includes pagination."""
 @router.get(
     "/me",
     response_model=PaginatedResponse[TicketBriefResponse],
@@ -97,7 +97,7 @@ async def get_my_tickets(
         items=[TicketBriefResponse.model_validate(t) for t in tickets],
     )
 
-
+"""List all tickets with optional filters. Only accessible by team_lead or admin roles. Supports filtering by status, severity, priority, breach/escalation/unassigned flags, customer/assignee/team IDs, queue type, routing status, etc., and includes pagination."""
 @router.get(
     "",
     response_model=PaginatedResponse[TicketBriefResponse],
@@ -147,7 +147,7 @@ async def list_all_tickets(
         items=[TicketBriefResponse.model_validate(t) for t in tickets],
     )
 
-
+"""Get ticket details by ID. The response includes all ticket fields plus the comment history. Access is role-aware: customers can only access their own tickets, agents can only access tickets assigned to them, leads/admins can access all tickets."""
 @router.get(
     "/{ticket_id}",
     response_model=TicketDetailResponse,
@@ -166,7 +166,7 @@ async def get_ticket(
     )
     return TicketDetailResponse.model_validate(ticket)
 
-
+"""Transition ticket status. The allowed status transitions depend on the current status and the user's role. For example, an agent might be able to move a ticket from "open" to "in_progress", but only a lead/admin can move it to "closed". The service layer will enforce these rules and return an error if an invalid transition is attempted."""
 @router.put(
     "/{ticket_id}/status",
     response_model=TicketBriefResponse,
@@ -186,7 +186,7 @@ async def update_ticket_status(
     )
     return TicketBriefResponse.model_validate(ticket)
 
-
+"""Add a comment to a ticket. Agents/leads/admins can pass special flags in the request body to indicate if the comment should trigger certain actions, such as notifying the assignee, escalating the ticket, or adding an internal note that is not visible to the customer. The service layer will handle these flags and perform the corresponding actions."""
 @router.post(
     "/{ticket_id}/comments",
     response_model=CommentResponse,
@@ -209,7 +209,7 @@ async def add_comment(
     )
     return CommentResponse.from_orm_signed(comment)
 
-
+"""Assign a ticket to an agent. Only accessible by team_lead or admin roles. The request body includes the ID of the agent to assign to, and optionally a flag to indicate if the ticket should be auto-escalated to the"""
 @router.post(
     "/{ticket_id}/assign",
     response_model=TicketBriefResponse,
@@ -229,7 +229,7 @@ async def assign_ticket(
     )
     return TicketBriefResponse.model_validate(ticket)
 
-
+"""Upload a comment image/attachment to GCS. This endpoint can be used to upload files that will be attached to a comment. The file is first uploaded to GCS, and a signed URL is returned in the response. The client can then use this signed URL to attach the file to a comment when posting the comment content."""
 @router.post(
     "/comments/attachments/upload",
     summary="Upload a comment image/attachment to GCS",
@@ -284,7 +284,7 @@ async def upload_comment_attachment(
         "blob_path": blob_path,
     }
 
-
+"""Ticket self-escalation endpoint. Allows a user to manually escalate their ticket to the lead's team if they feel it's not being addressed in a timely manner. The user can provide an optional reason for escalation, which will be recorded in the ticket's history. The service layer will handle the escalation logic, such as changing the ticket's assigned team to the lead's team, updating the ticket status if necessary, and logging the escalation reason."""
 @router.post(
     "/attachments/upload",
     summary="Upload a ticket attachment to GCS",

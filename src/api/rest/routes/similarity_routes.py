@@ -7,6 +7,7 @@ import logging
 from src.data.clients.postgres_client import get_db
 from src.core.services.ticket_similarity_service import get_similarity_service
 from src.schemas.similarity_schema import SimilaritySearchResponse, SimilarTicket
+from src.data.repositories.ticket_repository import TicketRepository
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tickets/similarity", tags=["similarity"])
@@ -14,11 +15,7 @@ router = APIRouter(prefix="/api/tickets/similarity", tags=["similarity"])
 
 
 
-
-# ============================================================================
-# API Endpoints
-# ============================================================================
-
+"""Endpoint to search for similar tickets based on a query string. Returns a list of similar tickets with their similarity scores. Supports filtering by minimum similarity threshold and limiting the number of results. Only searches resolved/closed tickets to find relevant past issues."""
 @router.get("", response_model=SimilaritySearchResponse)
 async def search_similar_tickets(
     query: str = Query(
@@ -66,7 +63,7 @@ async def search_similar_tickets(
             min_similarity=min_similarity
         )
 
-
+"""Endpoint to generate and store an embedding for a specific ticket by ID. This can be used to backfill embeddings for existing tickets or generate embeddings for new tickets. Only generates embeddings for the ticket's title and description, and stores them in the database for later similarity searches."""
 @router.post("/generate-embedding/{ticket_id}")
 async def generate_ticket_embedding(
     ticket_id: int,
@@ -76,10 +73,7 @@ async def generate_ticket_embedding(
         from sqlalchemy import select
         from src.data.models.postgres.ticket import Ticket
 
-        result = await db.execute(
-            select(Ticket).where(Ticket.ticket_id == ticket_id)
-        )
-        ticket = result.scalar_one_or_none()
+        ticket = await TicketRepository(db).get_by_id(ticket_id)
 
         if not ticket:
             raise HTTPException(status_code=404, detail="Ticket not found")

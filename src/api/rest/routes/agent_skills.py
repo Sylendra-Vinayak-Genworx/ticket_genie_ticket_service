@@ -11,12 +11,12 @@ router = APIRouter()
 def get_service(db: AsyncSession = Depends(get_db)) -> AgentSkillService:
     return AgentSkillService(AgentSkillRepository(db))
 
-
+""""get the agent's skills """
 @router.get("/admin/users/{user_id}/skills", response_model=AgentSkillListResponse)
 async def get_agent_skills(user_id: str, service: AgentSkillService = Depends(get_service)):
     return await service.get_skills(user_id)
 
-
+"""update the agent's skills."""
 @router.put("/admin/users/{user_id}/skills", response_model=AgentSkillListResponse)
 async def update_agent_skills(user_id: str, payload: AgentSkillUpdateRequest, service: AgentSkillService = Depends(get_service)):
     return await service.update_skills(user_id, payload)

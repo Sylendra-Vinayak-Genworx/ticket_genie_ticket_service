@@ -38,7 +38,7 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.check_lead_timeout",
         "schedule": crontab(minute="*/2"),
     },
-    "poll-inbound-email": {               # ← NEW
+    "poll-inbound-email": {               
         "task": "tasks.poll_mailbox",
         "schedule": crontab(minute="*/1"),
     },
