@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 class AgentProfile(Base):
-  
+    """we are not using this,just keep for backward compatibility."""
     __tablename__ = "agent_profiles"
 
     agent_profile_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

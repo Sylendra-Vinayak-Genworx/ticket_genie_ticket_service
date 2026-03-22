@@ -23,6 +23,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "sentence-transformers>=5.2.3",
     "pgvector>=0.4.2",
+    "langchain-community>=0.4.1",
 ]
 
 [project.optional-dependencies]

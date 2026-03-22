@@ -7,7 +7,7 @@ from src.data.models.postgres.product import Product
 class ProductRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
-
+    """Repository for managing products. Provides methods to list, get, create, update, and delete products. Each product represents a specific software product or service that tickets can be associated with. The repository interacts with the database using SQLAlchemy's AsyncSession and is designed to be used by the ProductService for business logic related to product management."""
     async def list_all(self, active_only: bool = False) -> list[Product]:
         q = select(Product).order_by(Product.name)
         if active_only:

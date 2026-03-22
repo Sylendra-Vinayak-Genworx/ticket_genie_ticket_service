@@ -29,6 +29,7 @@ from src.data.repositories.ticket_repository import TicketRepository
 from src.schemas.email_schema import EmailPayload, EmailTicketParseResult, _groq_async, score_email_quality
 from src.schemas.notification_schema import TicketCreatedRequest
 from src.schemas.ticket_schema import TicketCreateRequest
+from src.templates.email_templates import _WELCOME_HTML, _WELCOME_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -41,72 +42,7 @@ def _generate_temp_password(length: int = 12) -> str:
 
 
 
-_WELCOME_HTML = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    body  {{ font-family: Georgia, serif; background: #f5f5f0; margin: 0; padding: 0; }}
-    .wrap {{ max-width: 560px; margin: 40px auto; background: #fff;
-             border-radius: 4px; overflow: hidden; border: 1px solid #e5e5e0; }}
-    .hdr  {{ background: #1a1a2e; padding: 28px 36px; }}
-    .hdr h1 {{ color: #fff; margin: 0; font-size: 18px;
-               font-weight: 400; letter-spacing: .5px; }}
-    .body {{ padding: 32px 36px; color: #333; line-height: 1.7; font-size: 15px; }}
-    .body p {{ margin: 0 0 16px; }}
-    .cred {{ background: #f0f4ff; border: 1px solid #c8d4f0; border-radius: 4px;
-             padding: 16px 20px; font-family: monospace; font-size: 14px;
-             margin: 16px 0; line-height: 2; }}
-    .btn  {{ display: inline-block; background: #2563eb; color: #fff !important;
-             padding: 12px 28px; border-radius: 6px; text-decoration: none;
-             font-weight: 600; font-size: 14px; margin: 8px 0; }}
-    .ftr  {{ padding: 16px 36px; background: #fafaf8;
-             color: #999; font-size: 12px; border-top: 1px solid #eee; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="hdr"><h1>Welcome to {from_name}</h1></div>
-    <div class="body">
-      <p>Hi {customer_name},</p>
-      <p>
-        We received your support request and automatically created a portal
-        account so you can track your ticket and get faster help in the future.
-      </p>
-      <p>Your login credentials:</p>
-      <div class="cred">
-        <strong>Email:</strong> {email}<br/>
-        <strong>Temporary Password:</strong> {temp_password}
-      </div>
-      <p>
-        <a href="{login_url}" class="btn">Sign in to the portal →</a>
-      </p>
-      <p>
-      
-        Your support ticket <strong>{ticket_number}</strong> is already waiting for you there.
-      </p>
-      <p>— {from_name}</p>
-    </div>
-    <div class="ftr">
-      If you did not send a support email to us, please ignore this message.
-    </div>
-  </div>
-</body>
-</html>
-"""
 
-_WELCOME_TEXT = (
-    "Hi {customer_name},\n\n"
-    "We received your support request and created a portal account for you.\n\n"
-    "Login credentials:\n"
-    "  Email:              {email}\n"
-    "  Temporary Password: {temp_password}\n\n"
-    "Sign in at: {login_url}\n\n"
-    
-    "Your ticket {ticket_number} is already waiting for you in the portal.\n\n"
-    "— {from_name}\n"
-)
 
 
 class EmailIngestService:

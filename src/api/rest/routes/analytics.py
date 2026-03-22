@@ -53,7 +53,7 @@ def _build_filters(
         customer_tier_id=customer_tier_id,
     )
 
-
+"""Analytics endpoints for Admin/Lead dashboards, SLA compliance, agent performance, etc."""
 @router.get(
     "/dashboard",
     response_model=AdminDashboard,
@@ -78,7 +78,7 @@ async def get_dashboard(
         filters, current_user_role=user_role, assignee_ids=assignee_ids, auth_client=auth
     )
 
-
+"""SLA compliance report for Admin/Lead dashboards."""
 @router.get(
     "/sla-compliance",
     response_model=SLAComplianceReport,
@@ -96,7 +96,7 @@ async def get_sla_compliance(
     return await svc.get_sla_compliance(filters, current_user_role=user_role)
 
 
-
+"""Agent performance report (ticket resolution times, customer satisfaction, etc.) for the agent themselves, or for their team if the requester is a lead."""
 @router.get(
     "/agents/{agent_user_id}",
     response_model=AgentPerformance,
@@ -116,7 +116,7 @@ async def get_agent_performance(
         auth_client=auth,
     )
 
-
+"""Customer ticket reports (number of tickets, average resolution time, etc.) for the customer themselves, or for all customers if the requester is a lead/admin."""
 @router.get(
     "/customers",
     response_model=list[CustomerTicketReport],
@@ -134,7 +134,7 @@ async def get_customer_reports(
     return await svc.get_customer_reports(filters, current_user_role=user_role)
 
 
-
+"""My tickets" report for customers, showing their own tickets and stats about them."""
 @router.get(
     "/me",
     response_model=CustomerTicketReport,

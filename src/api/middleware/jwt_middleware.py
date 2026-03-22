@@ -1,5 +1,6 @@
-import logging
 from typing import Callable
+
+import structlog
 
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError
@@ -11,7 +12,7 @@ from starlette.responses import Response
 
 from src.config.settings import get_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 settings = get_settings()
 
 _PUBLIC_PATHS: set[str] = {"/health", "/health/", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/signup"}
@@ -62,7 +63,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 },
             )
         except JWTError as exc:
-            logger.warning("jwt_middleware: invalid token — %s", exc)
+            logger.warning("jwt_middleware.invalid_token", error=str(exc))
             return JSONResponse(
                 status_code=401,
                 content={
@@ -87,8 +88,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
         request.state.user_role = str(user_role)
 
         logger.debug(
-            "jwt_middleware: authenticated user_id=%s role=%s path=%s",
-            user_id, user_role, request.url.path,
+            "jwt_middleware.authenticated",
+            user_id=user_id,
+            role=user_role,
+            path=request.url.path,
         )
 
         return await call_next(request)

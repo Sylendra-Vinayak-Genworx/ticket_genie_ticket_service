@@ -26,5 +26,4 @@ pyproject.toml
 Makefile
 ruff.toml
 dump.sql
-run_migration.py
 EOF

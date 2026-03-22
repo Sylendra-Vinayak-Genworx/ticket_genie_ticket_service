@@ -9,7 +9,7 @@ from src.constants.enum import UserRole
 from src.data.models.postgres.agent_profile import AgentProfile
 from src.schemas.agent_schema import AgentProfileSyncRequest
 
-
+"""keept for backward compatibility, we are not using this."""
 class AgentRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db

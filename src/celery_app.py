@@ -12,7 +12,8 @@ celery_app = Celery(
     include=[
         "src.core.tasks.sla_tasks",
         "src.core.tasks.assignment_task",
-        "src.core.tasks.email_tasks",      
+        "src.core.tasks.email_tasks",
+        "src.core.tasks.embedding_tasks",
     ],
 )
 
@@ -37,7 +38,7 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.check_lead_timeout",
         "schedule": crontab(minute="*/2"),
     },
-    "poll-inbound-email": {               # ← NEW
+    "poll-inbound-email": {               
         "task": "tasks.poll_mailbox",
         "schedule": crontab(minute="*/1"),
     },

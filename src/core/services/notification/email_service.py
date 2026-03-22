@@ -24,6 +24,19 @@ from src.schemas.notification_schema import (
     TicketAssignedRequest,
     TicketCreatedRequest,
 )
+from src.templates.email_templates import (
+    _ACK_HTML, _ACK_TEXT,
+    _CONTINUE_HTML, _CONTINUE_TEXT,
+    _draft_agent_comment,
+    _draft_clarification,
+    _draft_sla_breached,
+    _draft_status_changed,
+    _draft_ticket_created,
+    _draft_assigned_agent,
+    _draft_assigned_lead,
+    _draft_customer_comment,
+    _draft_auto_closed
+)
 from src.data.models.postgres.notification_log import NotificationLog
 from src.data.repositories.notification_log_repository import NotificationLogRepository
 from src.data.models.postgres.email_thread import EmailThread, EmailDirection
@@ -31,141 +44,8 @@ from src.data.repositories.email_thread_repository import EmailThreadRepository
 
 logger = logging.getLogger(__name__)
 
-# All symbols from auto_reply_service are imported lazily inside _get_ai_draft()
-# and the helpers below to avoid a circular import at module load time.
-# (email_service → auto_reply_service → notification/manager → email_service)
 
-def _get_ai_draft():
-    from src.core.services.auto_reply_service import get_ai_draft_service
-    return get_ai_draft_service()
-
-
-def _reply_mode():
-    from src.core.services.auto_reply_service import ReplyMode
-    return ReplyMode
-
-
-def _ticket_context(**kwargs):
-    from src.core.services.auto_reply_service import TicketContext
-    return TicketContext(**kwargs)
-
-
-# ── HTML / text templates for ingest-pipeline outbound emails ─────────────────
-
-_ACK_HTML = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    body  {{ font-family: Georgia, serif; background: #f5f5f0; margin: 0; padding: 0; }}
-    .wrap {{ max-width: 560px; margin: 40px auto; background: #fff;
-             border-radius: 4px; overflow: hidden; border: 1px solid #e5e5e0; }}
-    .hdr  {{ background: #1a1a2e; padding: 28px 36px; }}
-    .hdr h1 {{ color: #fff; margin: 0; font-size: 18px;
-               font-weight: 400; letter-spacing: .5px; }}
-    .body {{ padding: 32px 36px; color: #333; line-height: 1.7; font-size: 15px; }}
-    .body p {{ margin: 0 0 16px; }}
-    .badge {{ display: inline-block; background: #f0f0ff; color: #1a1a2e;
-              font-family: monospace; font-weight: 700; font-size: 16px;
-              padding: 5px 14px; border-radius: 3px;
-              border: 1px solid #c8c8e8; letter-spacing: 1px; }}
-    .ftr  {{ padding: 16px 36px; background: #fafaf8;
-             color: #999; font-size: 12px; border-top: 1px solid #eee; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="hdr"><h1>Support request received</h1></div>
-    <div class="body">
-      <p>Hi {customer_name},</p>
-      <p>
-        Thanks for reaching out. We've logged your request and a member of
-        our team will follow up shortly.
-      </p>
-      <p>Your ticket number is <span class="badge">{ticket_number}</span></p>
-      <p>
-        Simply reply to this email if you have anything to add and we'll
-        attach it to your ticket automatically.
-      </p>
-      <p>— {from_name}</p>
-    </div>
-    <div class="ftr">
-      This is an automated message. Reply only to update ticket {ticket_number}.
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-_ACK_TEXT = (
-    "Hi {customer_name},\n\n"
-    "Thanks for reaching out. We've logged your request under ticket "
-    "{ticket_number}. A member of our team will follow up shortly.\n\n"
-    "Simply reply to this email to add more information to your ticket.\n\n"
-    "— {from_name}\n"
-)
-
-_CONTINUE_HTML = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    body  {{ font-family: Georgia, serif; background: #f5f5f0; margin: 0; padding: 0; }}
-    .wrap {{ max-width: 560px; margin: 40px auto; background: #fff;
-             border-radius: 4px; overflow: hidden; border: 1px solid #e5e5e0; }}
-    .hdr  {{ background: #1a1a2e; padding: 28px 36px; }}
-    .hdr h1 {{ color: #fff; margin: 0; font-size: 18px;
-               font-weight: 400; letter-spacing: .5px; }}
-    .body {{ padding: 32px 36px; color: #333; line-height: 1.7; font-size: 15px; }}
-    .body p {{ margin: 0 0 16px; }}
-    .badge {{ display: inline-block; background: #f0f0ff; color: #1a1a2e;
-              font-family: monospace; font-weight: 700; font-size: 16px;
-              padding: 5px 14px; border-radius: 3px;
-              border: 1px solid #c8c8e8; letter-spacing: 1px; }}
-    .btn  {{ display: inline-block; background: #1a1a2e; color: #fff !important;
-             text-decoration: none; padding: 13px 30px; border-radius: 4px;
-             font-size: 14px; font-weight: 700; letter-spacing: .5px; margin: 8px 0 4px; }}
-    .ftr  {{ padding: 16px 36px; background: #fafaf8;
-             color: #999; font-size: 12px; border-top: 1px solid #eee; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="hdr"><h1>We've got your reply — {ticket_number}</h1></div>
-    <div class="body">
-      <p>Hi {customer_name},</p>
-      <p>
-        We've added your message to ticket
-        <span class="badge">{ticket_number}</span>.
-      </p>
-      <p>
-        For the best experience — including real-time updates, file attachments,
-        and full conversation history — you can continue the conversation
-        directly in our support portal:
-      </p>
-      <p><a class="btn" href="{ticket_url}">View ticket in portal →</a></p>
-      
-      </p>
-      <p>— {from_name}</p>
-    </div>
-    <div class="ftr">
-      Ticket {ticket_number} · <a href="{ticket_url}">{ticket_url}</a>
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-_CONTINUE_TEXT = (
-    "Hi {customer_name},\n\n"
-    "We've added your message to ticket {ticket_number}.\n\n"
-    "You can view and continue the conversation in our support portal:\n"
-    "{ticket_url}\n\n"
-    "— {from_name}\n"
-)
-
+# ── Service ────────────────────────────────────────────────────────────────────
 
 class EmailNotificationService:
 
@@ -190,7 +70,6 @@ class EmailNotificationService:
         if self._config is not None:
             return self._config
 
-        # ── 1. Try database ────────────────────────────────────────────────
         try:
             service = EmailConfigService(self._db)
             db_config = await service.get_decrypted_config()
@@ -206,7 +85,6 @@ class EmailNotificationService:
         except Exception as exc:
             logger.warning("email_service: failed to load database config: %s", exc)
 
-        # ── 2. Fall back to environment ────────────────────────────────────
         logger.info("email_service: using environment SMTP configuration")
         s = get_settings()
         self._config = {
@@ -218,26 +96,20 @@ class EmailNotificationService:
         }
         return self._config
 
-    # ── Existing lifecycle notifications ──────────────────────────────────────
+    # ── Lifecycle notifications ────────────────────────────────────────────────
 
     async def send_ticket_created(
         self, req: TicketCreatedRequest, recipient_email: str
     ) -> None:
         config = await self._ensure_config()
-        subject = f"[{req.ticket_number}] Your support ticket has been received"
-        body = (
-            f"Hi,\n\n"
-            f"We've received your ticket [{req.ticket_number}]: {req.ticket_title}.\n"
-            f"Our team will get back to you shortly.\n\n"
-            f"— {config['smtp_from_name']}"
+        subject, text, html = _draft_ticket_created(
+            req.ticket_number, req.ticket_title,
+            config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.customer_id,
-            recipient_email=recipient_email,
-            subject=subject,
-            body=body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.customer_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type=EventType.CREATED.value,
         )
 
@@ -245,25 +117,16 @@ class EmailNotificationService:
         self, req: StatusChangedRequest, recipient_email: str, customer_name: str
     ) -> None:
         config = await self._ensure_config()
-        draft = await _get_ai_draft().draft(
-            mode=_reply_mode().NOTIFY_CUSTOMER,
-            context=_ticket_context(
-                ticket_number=req.ticket_number,
-                ticket_title=req.ticket_title,
-                status=req.new_status,
-                severity=req.severity,
-                customer_name=customer_name,
-                agent_name=req.agent_name,
-            ),
-            event=f"Your ticket status changed from {req.old_status} to {req.new_status}.",
+        subject, text, html = _draft_status_changed(
+            req.ticket_number, req.ticket_title,
+            req.old_status, req.new_status, req.severity,
+            req.agent_name, customer_name,
+            config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.customer_id,
-            recipient_email=recipient_email,
-            subject=draft.subject,
-            body=draft.body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.customer_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type=EventType.STATUS_CHANGED.value,
         )
 
@@ -271,26 +134,15 @@ class EmailNotificationService:
         self, req: AgentCommentRequest, recipient_email: str, customer_name: str
     ) -> None:
         config = await self._ensure_config()
-        draft = await _get_ai_draft().draft(
-            mode=_reply_mode().NOTIFY_CUSTOMER,
-            context=_ticket_context(
-                ticket_number=req.ticket_number,
-                ticket_title=req.ticket_title,
-                status=req.status,
-                severity=req.severity,
-                customer_name=customer_name,
-                agent_name=req.agent_name,
-                history=req.history,
-            ),
-            event=req.comment_body,
+        subject, text, html = _draft_agent_comment(
+            req.ticket_number, req.ticket_title,
+            req.status, req.severity, req.agent_name, req.comment_body,
+            customer_name, config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.customer_id,
-            recipient_email=recipient_email,
-            subject=draft.subject,
-            body=draft.body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.customer_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type="AGENT_COMMENT",
         )
 
@@ -298,76 +150,75 @@ class EmailNotificationService:
         self, req: CustomerCommentRequest, recipient_email: str
     ) -> None:
         config = await self._ensure_config()
-        subject = f"[{req.ticket_number}] New reply from {req.customer_name}"
-        body = (
-            f"Hi,\n\n"
-            f"{req.customer_name} replied on [{req.ticket_number}]: {req.ticket_title}.\n\n"
-            f'"{req.comment_body}"\n\n'
-            f"Log in to the portal to respond.\n\n"
-            f"— {config['smtp_from_name']}"
+        subject, text, html = _draft_customer_comment(
+            req.ticket_number, req.ticket_title, req.customer_name,
+            req.comment_body, config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.assignee_id,
-            recipient_email=recipient_email,
-            subject=subject,
-            body=body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.assignee_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type="CUSTOMER_COMMENT",
         )
 
     async def send_ticket_assigned(
         self, req: TicketAssignedRequest, recipient_email: str, agent_name: str
     ) -> None:
+        """
+        Notification to an individual agent when a ticket is directly assigned to them.
+        For team-lead routing fallback notifications use send_ticket_assigned_to_lead.
+        """
         config = await self._ensure_config()
-        draft = await _get_ai_draft().draft(
-            mode=_reply_mode().NOTIFY_AGENT,
-            context=_ticket_context(
-                ticket_number=req.ticket_number,
-                ticket_title=req.ticket_title,
-                status=req.status,
-                severity=req.severity,
-                customer_name=req.customer_name,
-                agent_name=agent_name,
-            ),
-            event=f"Ticket [{req.ticket_number}] has been assigned to you. Please review and begin work.",
+        subject, text, html = _draft_assigned_agent(
+            req.ticket_number, req.ticket_title,
+            req.status, req.severity, req.customer_name, agent_name,
+            config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.assignee_id,
-            recipient_email=recipient_email,
-            subject=draft.subject,
-            body=draft.body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.assignee_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
+            event_type=EventType.ASSIGNED.value,
+        )
+
+    async def send_ticket_assigned_to_lead(
+        self, req: TicketAssignedRequest, recipient_email: str, lead_name: str
+    ) -> None:
+        """
+        Lead-specific routing notification when a ticket is placed in the team
+        queue with no individual assignee (AI routing fallback scenario).
+        The lead must triage and assign it to an available agent.
+        """
+        config = await self._ensure_config()
+        subject, text, html = _draft_assigned_lead(
+            req.ticket_number, req.ticket_title,
+            req.status, req.severity, req.customer_name, lead_name,
+            config.get("smtp_from_name", "Support Team"),
+        )
+        await self._deliver(
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.assignee_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type=EventType.ASSIGNED.value,
         )
 
     async def send_sla_breached(
         self, req: SLABreachedRequest, recipient_email: str, lead_name: str
     ) -> None:
+        """
+        Escalation alert to a team lead when an SLA deadline is breached.
+        Full ticket context + breach type + amber action-required callout box.
+        """
         config = await self._ensure_config()
-        draft = await _get_ai_draft().draft(
-            mode=_reply_mode().NOTIFY_AGENT,
-            context=_ticket_context(
-                ticket_number=req.ticket_number,
-                ticket_title=req.ticket_title,
-                status=req.status,
-                severity=req.severity,
-                customer_name=req.customer_name,
-                agent_name=lead_name,
-            ),
-            event=(
-                f"[{req.ticket_number}] has breached its {req.breach_type} SLA. "
-                f"Immediate escalation action is required."
-            ),
+        subject, text, html = _draft_sla_breached(
+            req.ticket_number, req.ticket_title,
+            req.status, req.severity, req.customer_name, req.breach_type,
+            lead_name, config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.lead_id,
-            recipient_email=recipient_email,
-            subject=draft.subject,
-            body=draft.body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.lead_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type=EventType.SLA_BREACHED.value,
         )
 
@@ -375,25 +226,18 @@ class EmailNotificationService:
         self, req: AutoClosedRequest, recipient_email: str, customer_name: str
     ) -> None:
         config = await self._ensure_config()
-        subject = f"[{req.ticket_number}] Your ticket has been closed"
-        body = (
-            f"Hi {customer_name},\n\n"
-            f"Your ticket [{req.ticket_number}]: {req.ticket_title} has been "
-            f"automatically closed after being resolved with no further activity.\n\n"
-            f"If you still need help, please open a new ticket.\n\n"
-            f"— {config['smtp_from_name']}"
+        subject, text, html = _draft_auto_closed(
+            req.ticket_number, req.ticket_title,
+            customer_name, config.get("smtp_from_name", "Support Team"),
         )
         await self._deliver(
-            config=config,
-            ticket_id=req.ticket_id,
-            recipient_id=req.customer_id,
-            recipient_email=recipient_email,
-            subject=subject,
-            body=body,
+            config=config, ticket_id=req.ticket_id,
+            recipient_id=req.customer_id, recipient_email=recipient_email,
+            subject=subject, body=text, html_body=html,
             event_type="AUTO_CLOSED",
         )
 
-    # ── Email ingest pipeline outbound emails ─────────────────────────────────
+    # ── Email ingest pipeline outbound emails ──────────────────────────────────
 
     async def send_ticket_ack(
         self,
@@ -407,7 +251,6 @@ class EmailNotificationService:
     ) -> None:
         config = await self._ensure_config()
         from_name = config.get("smtp_from_name", "Support Team")
-
         html_body = _ACK_HTML.format(
             customer_name=customer_name,
             ticket_number=ticket_number,
@@ -418,7 +261,6 @@ class EmailNotificationService:
             ticket_number=ticket_number,
             from_name=from_name,
         )
-
         await self._deliver(
             config=config,
             ticket_id=ticket_id,
@@ -447,7 +289,6 @@ class EmailNotificationService:
         ticket_number: str,
         original_message_id: str,
     ) -> None:
-
         from src.utils.portal_token import generate_portal_token
 
         config = await self._ensure_config()
@@ -455,7 +296,6 @@ class EmailNotificationService:
 
         s = get_settings()
         base_url = getattr(s, "APP_BASE_URL", "http://localhost").rstrip("/")
-
         ticket_url = f"{base_url}/login"
 
         html_body = _CONTINUE_HTML.format(
@@ -470,7 +310,6 @@ class EmailNotificationService:
             ticket_url=ticket_url,
             from_name=from_name,
         )
-
         await self._deliver(
             config=config,
             ticket_id=ticket_id,
@@ -497,41 +336,18 @@ class EmailNotificationService:
         original_subject: str,
         missing_fields: list[str],
     ) -> None:
-
         config = await self._ensure_config()
+        from_name = config.get("smtp_from_name", "Support Team")
 
-        missing_bullet_list = "\n".join(f"  • {m}" for m in missing_fields)
-        event_text = (
-            "We received your support request but need a bit more detail before we "
-            "can create a ticket and assign it to an agent.\n\n"
-            f"Please send us a new email with the following information:\n{missing_bullet_list}"
+        subject, text, html = _draft_clarification(
+            original_subject, customer_name, missing_fields, from_name,
         )
 
-        draft = await _get_ai_draft().draft(
-            mode=_reply_mode().CLARIFY_CUSTOMER,
-            context=_ticket_context(
-                ticket_number="",
-                ticket_title=original_subject,
-                status="",
-                severity="MEDIUM",
-                customer_name=customer_name,
-                agent_name=None,
-            ),
-            event=event_text,
-        )
-
-        # Strip the subject from AI — use a clean Re: of the original instead.
-        # The LLM tends to invent unhelpful subjects like "Ticket Number Not Assigned".
-        clean_original = re.sub(r"^(re|fwd?):\s*", "", original_subject, flags=re.IGNORECASE).strip()
-        subject = f"Re: {clean_original}"
-
-        # No ticket exists yet — call _smtp_send directly so we don't write
-        # a NotificationLog row with a NULL/invalid ticket_id FK.
-        smtp_cfg = config
-        outbound_domain = smtp_cfg.get("smtp_user", "support@ticketgenie.ai").split("@")[-1]
+        outbound_domain = config.get("smtp_user", "support@ticketgenie.ai").split("@")[-1]
         from email.utils import make_msgid as _make_msgid
         outbound_mid = _make_msgid(domain=outbound_domain)
-        if smtp_cfg.get("smtp_user"):
+
+        if config.get("smtp_user"):
             import asyncio as _asyncio
             from functools import partial as _partial
             loop = _asyncio.get_running_loop()
@@ -539,10 +355,11 @@ class EmailNotificationService:
                 None,
                 _partial(
                     self._smtp_send,
-                    config=smtp_cfg,
+                    config=config,
                     to=recipient_email,
                     subject=subject,
-                    body=draft.body,
+                    body=text,
+                    html_body=html,
                     message_id=outbound_mid,
                     in_reply_to=original_message_id,
                     references=original_message_id,
@@ -551,7 +368,7 @@ class EmailNotificationService:
         else:
             logger.info(
                 "email_service [DEV]: clarify to=%s subject=%r\n%s",
-                recipient_email, subject, draft.body,
+                recipient_email, subject, text,
             )
         logger.info(
             "email_service: sent clarification request to=%s subject=%r missing=%s",
@@ -571,11 +388,9 @@ class EmailNotificationService:
         in_reply_to: str | None = None,
         references: str | None = None,
     ) -> None:
-   
         now = datetime.now(timezone.utc)
         status = NotificationStatus.PENDING
 
-     
         smtp_domain = config.get("smtp_user", "support@ticketgenie.ai").split("@")[-1]
         outbound_message_id = make_msgid(domain=smtp_domain)
 
@@ -618,9 +433,8 @@ class EmailNotificationService:
             sent_at=now if status == NotificationStatus.SENT else None,
         ))
 
-        # Record the outbound email in email_threads so that when the customer
-        # replies, _find_existing_ticket can match their In-Reply-To header to
-        # this message_id and route the reply to the correct ticket.
+        # Record outbound email so customer replies can be matched back to this ticket
+        # via the In-Reply-To header in email_ingestion_service._find_existing_ticket.
         if status == NotificationStatus.SENT:
             try:
                 await self._thread_repo.add(EmailThread(
@@ -653,13 +467,13 @@ class EmailNotificationService:
         message_id: str | None = None,
     ) -> None:
         """
-        Sync SMTP send — called via run_in_executor so it never blocks the loop.
+        Sync SMTP send — called via run_in_executor so it never blocks the event loop.
 
-        Builds a multipart/alternative message always (plain-text + optional HTML).
-        Threading headers (Message-ID, In-Reply-To, References) are set when provided.
+        Builds multipart/alternative (plain-text + optional HTML).
+        Threading headers (Message-ID, In-Reply-To, References) set when provided.
 
         Port 465 → implicit SSL (SMTP_SSL).
-        Port 587 or any other → STARTTLS (SMTP + starttls).
+        Port 587 or any other → STARTTLS.
         """
         msg = MIMEMultipart("alternative")
         msg.attach(MIMEText(body, "plain", "utf-8"))
@@ -683,12 +497,10 @@ class EmailNotificationService:
         smtp_pass = config["smtp_password"]
 
         if smtp_port == 465:
-            # Implicit SSL — no STARTTLS handshake needed
             with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
                 smtp.login(smtp_user, smtp_pass)
                 smtp.sendmail(smtp_user, to, msg.as_string())
         else:
-            # Explicit TLS via STARTTLS (port 587 or custom)
             with smtplib.SMTP(smtp_host, smtp_port) as smtp:
                 smtp.ehlo()
                 smtp.starttls()

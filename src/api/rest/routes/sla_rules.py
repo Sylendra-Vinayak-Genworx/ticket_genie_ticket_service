@@ -19,8 +19,7 @@ from src.schemas.sla_rule_schema import (
 
 router = APIRouter(prefix="/sla-rules", tags=["sla-rules"])
 
-
-
+"""list SLAs with optional filters for active status and customer tier. Supports pagination."""
 @router.get(
     "",
     response_model=PaginatedResponse[SLAResponse],
@@ -47,7 +46,7 @@ async def list_slas(
         items=[SLAResponse.model_validate(s) for s in slas],
     )
 
-
+"""Get SLA details by ID, including nested rules."""
 @router.get(
     "/{sla_id}",
     response_model=SLAResponse,
@@ -57,7 +56,7 @@ async def get_sla(sla_id: int, svc: SLARuleManagementServiceDep):
     sla = await svc.get_sla(sla_id)
     return SLAResponse.model_validate(sla)
 
-
+"""Create a new SLA with associated rules. Only accessible by LEAD or ADMIN roles."""
 @router.post(
     "",
     response_model=SLAResponse,
@@ -72,7 +71,7 @@ async def create_sla(
     sla = await svc.create_sla(payload, current_user_role=user_role)
     return SLAResponse.model_validate(sla)
 
-
+"""Update an existing SLA by ID. Only accessible by LEAD or ADMIN roles."""
 @router.put(
     "/{sla_id}",
     response_model=SLAResponse,
@@ -87,7 +86,7 @@ async def update_sla(
     sla = await svc.update_sla(sla_id, payload, current_user_role=user_role)
     return SLAResponse.model_validate(sla)
 
-
+"""Delete an SLA by ID. Only accessible by LEAD or ADMIN roles."""
 @router.delete(
     "/{sla_id}",
     status_code=status.HTTP_204_NO_CONTENT,

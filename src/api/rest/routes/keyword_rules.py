@@ -19,7 +19,7 @@ from src.schemas.keyword_rule_schema import (
 router = APIRouter(prefix="/keyword-rules", tags=["keyword-rules"])
 
 
-
+"""List keyword rules with optional filters for active status, target severity, and match field. Supports pagination."""
 @router.get(
     "",
     response_model=PaginatedResponse[KeywordRuleResponse],
@@ -48,7 +48,7 @@ async def list_rules(
         items=[KeywordRuleResponse.model_validate(r) for r in rules],
     )
 
-
+"""Get a keyword rule by ID."""
 @router.get(
     "/{rule_id}",
     response_model=KeywordRuleResponse,
@@ -58,7 +58,7 @@ async def get_rule(rule_id: int, svc: KeywordRuleServiceDep):
     rule = await svc.get_rule(rule_id)
     return KeywordRuleResponse.model_validate(rule)
 
-
+"""Create a new keyword rule. Only accessible by LEAD or ADMIN roles."""
 @router.post(
     "",
     response_model=KeywordRuleResponse,
@@ -73,7 +73,7 @@ async def create_rule(
     rule = await svc.create_rule(payload, current_user_role=user_role)
     return KeywordRuleResponse.model_validate(rule)
 
-
+"""Update an existing keyword rule by ID. Only accessible by LEAD or ADMIN roles."""
 @router.put(
     "/{rule_id}",
     response_model=KeywordRuleResponse,
@@ -88,7 +88,7 @@ async def update_rule(
     rule = await svc.update_rule(rule_id, payload, current_user_role=user_role)
     return KeywordRuleResponse.model_validate(rule)
 
-
+"""Delete a keyword rule by ID. Only accessible by LEAD or ADMIN roles."""
 @router.delete(
     "/{rule_id}",
     status_code=status.HTTP_204_NO_CONTENT,

@@ -1,13 +1,9 @@
-
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from src.api.middleware.cors import setup_cors
-from fastapi.openapi.utils import get_openapi
-
 from src.api.middleware.error_handler import register_exception_handlers
+from src.api.middleware.logging import StructLogMiddleware
 from src.api.rest.routes.health import router as health_router
 from src.api.rest.routes.tickets import router as ticket_router
 from src.api.rest.routes.keyword_rules import router as keyword_rules_router
@@ -18,12 +14,15 @@ from src.data.clients.postgres_client import engine
 from src.data.models.postgres import Base
 from src.observability.logging.logger import setup_logging
 from src.api.middleware.jwt_middleware import JWTMiddleware
-from src.api.rest.routes.notification_routes import router as  notification_router
+from src.api.rest.routes.notification_routes import router as notification_router
 from src.api.rest.routes.tier_routes import router as tier_router
 from src.api.rest.routes.agent_skills import router as agent_skills_router
 import src.data.models.postgres
 from src.api.rest.routes.email_config_routes import router as email_config_router
 from src.api.rest.routes.product_routes import router as product_router
+from src.api.rest.routes.similarity_routes import router as similarity_router
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
@@ -35,8 +34,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     from src.core.services.notification.adapter import apply_notification_patch
     apply_notification_patch()
-    
     setup_logging()
+
     app = FastAPI(
         title="Ticketing Genie — Ticketing Service",
         version="1.0.0",
@@ -47,9 +46,9 @@ def create_app() -> FastAPI:
         ),
         lifespan=lifespan,
     )
-    setup_cors(app)
-    app.add_middleware(JWTMiddleware)
+
     register_exception_handlers(app)
+
     app.include_router(health_router)
     app.include_router(ticket_router)
     app.include_router(keyword_rules_router)
@@ -61,4 +60,10 @@ def create_app() -> FastAPI:
     app.include_router(agent_skills_router)
     app.include_router(email_config_router)
     app.include_router(product_router)
+    app.include_router(similarity_router)
+
+    app.add_middleware(JWTMiddleware)
+    app.add_middleware(StructLogMiddleware)
+    setup_cors(app) 
+
     return app
