@@ -12,7 +12,8 @@ celery_app = Celery(
     include=[
         "src.core.tasks.sla_tasks",
         "src.core.tasks.assignment_task",
-        "src.core.tasks.email_tasks",      
+        "src.core.tasks.email_tasks",
+        "src.core.tasks.embedding_tasks",
     ],
 )
 

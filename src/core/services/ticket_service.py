@@ -280,6 +280,24 @@ class TicketService:
 
         elif new_status == TicketStatus.RESOLVED:
             self._sla_svc.complete_resolution_sla(ticket, now)
+            
+            # ── Trigger embedding generation (async, non-blocking) ────────────────
+            try:
+                from src.core.tasks.embedding_tasks import generate_ticket_embedding
+                generate_ticket_embedding.delay(
+                    ticket_id=ticket.ticket_id,
+                    title=ticket.title,
+                    description=ticket.description
+                )
+                logger.info(
+                    "ticket_service: Enqueued embedding generation for resolved ticket_id=%s",
+                    ticket.ticket_id
+                )
+            except Exception as exc:
+                logger.exception(
+                    "ticket_service: Failed to enqueue embedding generation for ticket_id=%s: %s",
+                    ticket.ticket_id, exc
+                )
 
         elif new_status == TicketStatus.OPEN and old_status == TicketStatus.CLOSED:
             self._sla_svc.restart_resolution_sla(ticket, now)
