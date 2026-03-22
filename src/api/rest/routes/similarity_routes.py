@@ -1,50 +1,18 @@
-
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
-from src.data.clients.postgres_client import get_db  # ← fixed: was get_db_session
+from src.data.clients.postgres_client import get_db
 from src.core.services.ticket_similarity_service import get_similarity_service
-
+from src.schemas.similarity_schema import SimilaritySearchResponse, SimilarTicket
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tickets/similarity", tags=["similarity"])
 
 
-# ============================================================================
-# Pydantic Models
-# ============================================================================
 
-class SolutionComment(BaseModel):
-    """Comment from a resolved ticket showing solution."""
-    comment_id: int
-    comment_text: str
-    created_at: str
-    is_internal: bool  # removed created_by_name — column doesn't exist
-
-
-class SimilarTicket(BaseModel):
-    """Similar ticket with metadata and solutions."""
-    ticket_id: int
-    ticket_number: str
-    title: str
-    description: str
-    status: str
-    severity: str
-    priority: str
-    product: str
-    created_at: Optional[str] = None
-    similarity_score: float = Field(..., ge=0.0, le=1.0)
-    solution_comments: List[dict] = []
-
-
-class SimilaritySearchResponse(BaseModel):
-    """Response containing similar tickets."""
-    similar_tickets: List[SimilarTicket]
-    found_count: int
-    min_similarity: float
 
 
 # ============================================================================
@@ -55,7 +23,7 @@ class SimilaritySearchResponse(BaseModel):
 async def search_similar_tickets(
     query: str = Query(
         ...,
-        min_length=10,
+        min_length=3,
         max_length=2000,
         description="Search query text (ticket title + description)"
     ),
@@ -66,12 +34,12 @@ async def search_similar_tickets(
         description="Maximum number of results to return"
     ),
     min_similarity: float = Query(
-        0.3,  # ← lowered from 0.5
+        0.3,
         ge=0.0,
         le=1.0,
         description="Minimum similarity threshold (0-1)"
     ),
-    db: AsyncSession = Depends(get_db)  # ← fixed: was get_db_session
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         similarity_service = get_similarity_service()
@@ -102,7 +70,7 @@ async def search_similar_tickets(
 @router.post("/generate-embedding/{ticket_id}")
 async def generate_ticket_embedding(
     ticket_id: int,
-    db: AsyncSession = Depends(get_db)  # ← fixed: was get_db_session
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         from sqlalchemy import select
@@ -117,11 +85,11 @@ async def generate_ticket_embedding(
             raise HTTPException(status_code=404, detail="Ticket not found")
 
         similarity_service = get_similarity_service()
-        content = f"{ticket.title}\n\n{ticket.description}"  # ← renamed from text
+        content = f"{ticket.title}\n\n{ticket.description}"
 
         success = await similarity_service.generate_and_store_embedding(
             ticket_id=ticket_id,
-            content=content,  # ← fixed: was text=text
+            content=content,
             session=db
         )
 
@@ -160,7 +128,7 @@ async def similarity_health_check():
             "status": "healthy",
             "service": "ticket_similarity",
             "embedding_dimension": len(test_embedding),
-            "model": "sentence-transformers/all-mpnet-base-v2",  # ← fixed
+            "model": "sentence-transformers/all-mpnet-base-v2",
             "cost": "FREE (local embeddings)"
         }
 

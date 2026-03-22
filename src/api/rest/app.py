@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from src.api.middleware.cors import setup_cors
 from src.api.middleware.error_handler import register_exception_handlers
+from src.api.middleware.logging import StructLogMiddleware
 from src.api.rest.routes.health import router as health_router
 from src.api.rest.routes.tickets import router as ticket_router
 from src.api.rest.routes.keyword_rules import router as keyword_rules_router
@@ -61,8 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(product_router)
     app.include_router(similarity_router)
 
-  
     app.add_middleware(JWTMiddleware)
+    app.add_middleware(StructLogMiddleware)
     setup_cors(app) 
 
     return app

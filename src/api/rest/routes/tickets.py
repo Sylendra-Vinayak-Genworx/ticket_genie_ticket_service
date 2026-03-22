@@ -342,3 +342,23 @@ async def upload_attachment(
         "file_url":  signed_url,  
         "blob_path": blob_path,    
     }
+
+@router.post(
+    "/{ticket_id}/escalate",
+    response_model=TicketBriefResponse,
+    summary="Manually escalate a ticket to the lead's team",
+)
+async def self_escalate_ticket(
+    ticket_id: int,
+    svc: TicketServiceDep,
+    user_id: CurrentUserID,
+    user_role: CurrentUserRole,
+    reason: str = Query(default=None, description="Reason for manual escalation"),
+):
+    ticket = await svc.self_escalate(
+        ticket_id=ticket_id,
+        reason=reason,
+        current_user_id=user_id,
+        current_user_role=user_role,
+    )
+    return TicketBriefResponse.model_validate(ticket)

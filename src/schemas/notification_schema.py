@@ -6,10 +6,10 @@ from pydantic import BaseModel, ConfigDict
 
 class NotificationType(str, Enum):
     # Customer-facing
-    TICKET_CREATED  = "TICKET_CREATED"
-    STATUS_CHANGED  = "STATUS_CHANGED"
-    AGENT_COMMENT   = "AGENT_COMMENT"
-    AUTO_CLOSED     = "AUTO_CLOSED"
+    TICKET_CREATED   = "TICKET_CREATED"
+    STATUS_CHANGED   = "STATUS_CHANGED"
+    AGENT_COMMENT    = "AGENT_COMMENT"
+    AUTO_CLOSED      = "AUTO_CLOSED"
 
     # Agent-facing
     TICKET_ASSIGNED  = "TICKET_ASSIGNED"
@@ -19,17 +19,17 @@ class NotificationType(str, Enum):
     SLA_BREACHED = "SLA_BREACHED"
 
 
-# ── Base ──────────────────────────────────────────────────────────────────────
+# ── Base ───────────────────────────────────────────────────────────────────────
 
 class _NotificationBase(BaseModel):
-    model_config = ConfigDict(frozen=True)   
+    model_config = ConfigDict(frozen=True)
 
     ticket_id: int
     ticket_number: str
     ticket_title: str
 
 
-# ── Request models ────────────────────────────────────────────────────────────
+# ── Request models ─────────────────────────────────────────────────────────────
 
 class TicketCreatedRequest(_NotificationBase):
     type: Literal[NotificationType.TICKET_CREATED] = NotificationType.TICKET_CREATED
@@ -48,19 +48,19 @@ class StatusChangedRequest(_NotificationBase):
 class AgentCommentRequest(_NotificationBase):
     """
     Agent posted a public comment on an EMAIL-source ticket.
-    NotificationManager uses AIDraftService to compose the reply email.
+    EmailNotificationService renders comment_body directly into the email template.
     """
     type: Literal[NotificationType.AGENT_COMMENT] = NotificationType.AGENT_COMMENT
     status: str
     severity: str
     customer_id: str
     agent_name: str
-    comment_body: str                   # passed as `event` to AIDraftService
+    comment_body: str
     history: Optional[str] = None
 
 
 class CustomerCommentRequest(_NotificationBase):
-    """Customer replied -> notify the assigned agent."""
+    """Customer replied — notify the assigned agent."""
     type: Literal[NotificationType.CUSTOMER_COMMENT] = NotificationType.CUSTOMER_COMMENT
     customer_name: str
     comment_body: str
@@ -68,7 +68,7 @@ class CustomerCommentRequest(_NotificationBase):
 
 
 class TicketAssignedRequest(_NotificationBase):
-    """Ticket assigned -> notify the agent."""
+    """Ticket assigned — notify the agent or lead."""
     type: Literal[NotificationType.TICKET_ASSIGNED] = NotificationType.TICKET_ASSIGNED
     severity: str
     status: str
@@ -77,12 +77,12 @@ class TicketAssignedRequest(_NotificationBase):
 
 
 class SLABreachedRequest(_NotificationBase):
-    """SLA breached -> notify the lead."""
+    """SLA breached — escalation alert to the lead."""
     type: Literal[NotificationType.SLA_BREACHED] = NotificationType.SLA_BREACHED
     severity: str
     status: str
     customer_name: str
-    breach_type: str                    # "response" or "resolution"
+    breach_type: str          # "response" or "resolution"
     lead_id: str
 
 
@@ -91,7 +91,7 @@ class AutoClosedRequest(_NotificationBase):
     customer_id: str
 
 
-# ── Union type for type hints ─────────────────────────────────────────────────
+# ── Union type ─────────────────────────────────────────────────────────────────
 
 NotificationRequest = (
     TicketCreatedRequest
@@ -102,7 +102,3 @@ NotificationRequest = (
     | SLABreachedRequest
     | AutoClosedRequest
 )
-
-
-
-

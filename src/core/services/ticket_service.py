@@ -284,16 +284,14 @@ class TicketService:
             # ── Trigger embedding generation (async, non-blocking) ────────────────
             try:
                 from src.core.tasks.embedding_tasks import generate_ticket_embedding
-                generate_ticket_embedding.delay(
-                    ticket_id=ticket.ticket_id,
-                    title=ticket.title,
-                    description=ticket.description
-                )
+                # Pass ticket_id only - task will fetch comments and build solution text
+                generate_ticket_embedding.delay(ticket_id=ticket.ticket_id)
                 logger.info(
                     "ticket_service: Enqueued embedding generation for resolved ticket_id=%s",
                     ticket.ticket_id
                 )
             except Exception as exc:
+                # Log error but don't fail the status transition
                 logger.exception(
                     "ticket_service: Failed to enqueue embedding generation for ticket_id=%s: %s",
                     ticket.ticket_id, exc
@@ -705,3 +703,75 @@ class TicketService:
                 )
 
         return saved
+    
+    async def self_escalate(
+    self,
+    ticket_id: int,
+    reason: str,
+    current_user_id: str,
+    current_user_role: str,
+) -> Ticket:
+        """
+        Manual escalation triggered by an agent via the API.
+        Replicates the pre-work sla_tasks does before calling escalate(),
+        then delegates to the existing escalate() — no logic is duplicated.
+        """
+        role = UserRole(current_user_role)
+        if role != UserRole.AGENT:
+            raise InsufficientPermissionsError("Only agents can manually escalate tickets.")
+
+        ticket = await self._get_or_404(ticket_id)
+        now = datetime.now(timezone.utc)
+
+        # ── Same pre-work the SLA task does before calling escalate() ────────
+        ticket.escalation_level += 1
+        ticket.is_escalated = True
+        ticket = await self._ticket_repo.save(ticket)
+
+        # ── Resolve lead + team from auth service (same logic as sla_tasks) ──
+        lead_id: str | None = None
+        lead_team_id: str | None = None
+        try:
+            users = await self._auth.get_all_users()
+            leads = [u for u in users if u.role in ("team_lead", "LEAD", "lead")]
+            if leads:
+                same_team = [u for u in leads if u.team_id == ticket.team_id]
+                chosen = same_team[0] if same_team else leads[0]
+                lead_id = chosen.id
+                lead_team_id = chosen.team_id
+        except Exception:
+            logger.warning("self_escalate: could not resolve lead for ticket_id=%s", ticket_id)
+
+        # ── Delegate entirely to existing escalate() — no logic duplicated ───
+        ticket = await self.escalate(
+            ticket=ticket,
+            reason=reason or f"Manually escalated by agent {current_user_id}",
+            now=now,
+            lead_id=lead_id,
+            lead_team_id=lead_team_id,
+        )
+
+        # ── Notify the lead (email + SSE) ─────────────────────────────────────
+        if lead_id:
+            try:
+                customer = await self._auth.get_user(ticket.customer_id)
+                customer_name = customer.email.split("@")[0]
+            except Exception:
+                customer_name = "Customer"
+
+            await notification_manager.send(
+                request=SLABreachedRequest(
+                    ticket_id=ticket.ticket_id,
+                    ticket_number=ticket.ticket_number,
+                    ticket_title=ticket.title,
+                    severity=ticket.severity.value,
+                    status=ticket.status.value,
+                    customer_name=customer_name,
+                    breach_type=reason or f"Manually escalated by agent {current_user_id}",
+                    lead_id=lead_id,
+                ),
+                db=self.db,
+                auth_client=self._auth,
+            )
+
+        return ticket
