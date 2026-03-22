@@ -20,11 +20,11 @@ class TicketSimilarityService:
             try:
                 from langchain_community.embeddings import HuggingFaceEmbeddings
                 self._embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    model_name="sentence-transformers/all-mpnet-base-v2",
                     model_kwargs={'device': 'cpu'},
                     encode_kwargs={'normalize_embeddings': True}
                 )
-                logger.info("✓ Initialized sentence-transformers embeddings (384 dimensions)")
+                logger.info("✓ Initialized sentence-transformers embeddings (768 dimensions)")
             except Exception as e:
                 logger.error(f"Failed to initialize embeddings: {e}")
                 raise
@@ -35,11 +35,7 @@ class TicketSimilarityService:
             embeddings = self._get_embeddings()
             import asyncio
             loop = asyncio.get_event_loop()
-            embedding = await loop.run_in_executor(
-                None,
-                embeddings.embed_query,
-                content
-            )
+            embedding = await loop.run_in_executor(None, embeddings.embed_query, content)
             return embedding
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
@@ -50,7 +46,7 @@ class TicketSimilarityService:
         query_text: str,
         session: AsyncSession,
         top_k: int = 5,
-        min_similarity: float = 0.5,
+        min_similarity: float = 0.3,
         status_filter: Optional[List[str]] = None
     ) -> List[dict]:
         if status_filter is None:
@@ -60,9 +56,10 @@ class TicketSimilarityService:
             query_embedding = await self.generate_embedding(query_text)
             embedding_str = "[" + ",".join(f"{v:.8f}" for v in query_embedding) + "]"
 
+            # NOTE: "similar" is a reserved word in PostgreSQL — use "sim_results" as CTE name
             sql = text("""
-                WITH similar AS (
-                    SELECT 
+                WITH sim_results AS (
+                    SELECT
                         t.ticket_id,
                         t.ticket_number,
                         t.title,
@@ -75,13 +72,13 @@ class TicketSimilarityService:
                         1 - (te.embedding <=> CAST(:embedding AS vector)) AS similarity
                     FROM ticket_embeddings te
                     JOIN tickets t ON t.ticket_id = te.ticket_id
-                    WHERE t.status = ANY(:statuses)
+                    WHERE t.status IN ('RESOLVED', 'CLOSED')
                       AND te.embedding IS NOT NULL
                       AND 1 - (te.embedding <=> CAST(:embedding AS vector)) >= :min_similarity
                     ORDER BY te.embedding <=> CAST(:embedding AS vector)
                     LIMIT :limit
                 )
-                SELECT 
+                SELECT
                     s.*,
                     COALESCE(
                         (
@@ -100,22 +97,21 @@ class TicketSimilarityService:
                         ),
                         '[]'::json
                     ) as solution_comments
-                FROM similar s
+                FROM sim_results s
             """)
 
             result = await session.execute(
                 sql,
                 {
                     "embedding": embedding_str,
-                    "statuses": status_filter,
                     "min_similarity": min_similarity,
-                    "limit": top_k
+                    "limit": top_k,
                 }
             )
 
             similar_tickets = []
             for row in result.fetchall():
-                ticket_data = {
+                similar_tickets.append({
                     "ticket_id": row.ticket_id,
                     "ticket_number": row.ticket_number,
                     "title": row.title,
@@ -127,10 +123,9 @@ class TicketSimilarityService:
                     "created_at": row.created_at.isoformat() if row.created_at else None,
                     "similarity_score": round(float(row.similarity), 3),
                     "solution_comments": row.solution_comments or []
-                }
-                similar_tickets.append(ticket_data)
+                })
 
-            logger.info(f"Found {len(similar_tickets)} similar tickets for query (min_similarity={min_similarity})")
+            logger.info(f"Found {len(similar_tickets)} similar tickets (min_similarity={min_similarity})")
             return similar_tickets
 
         except Exception as e:
@@ -147,16 +142,15 @@ class TicketSimilarityService:
             embedding = await self.generate_embedding(content)
             embedding_str = "[" + ",".join(f"{v:.8f}" for v in embedding) + "]"
 
-            upsert_sql = text("""
-                INSERT INTO ticket_embeddings (ticket_id, embedding)
-                VALUES (:ticket_id, CAST(:embedding AS vector))
-                ON CONFLICT (ticket_id)
-                DO UPDATE SET
-                    embedding = EXCLUDED.embedding
-            """)
-
             await session.execute(
-                upsert_sql,
+                text("DELETE FROM ticket_embeddings WHERE ticket_id = :ticket_id"),
+                {"ticket_id": ticket_id}
+            )
+            await session.execute(
+                text("""
+                    INSERT INTO ticket_embeddings (ticket_id, embedding)
+                    VALUES (:ticket_id, CAST(:embedding AS vector))
+                """),
                 {"ticket_id": ticket_id, "embedding": embedding_str}
             )
 
@@ -165,7 +159,7 @@ class TicketSimilarityService:
 
         except Exception as e:
             logger.error(f"Failed to generate/store embedding for ticket {ticket_id}: {e}")
-            return False
+            raise
 
 
 _similarity_service: Optional[TicketSimilarityService] = None
@@ -176,7 +170,5 @@ def get_similarity_service() -> TicketSimilarityService:
     if _similarity_service is None:
         from src.config.settings import get_settings
         settings = get_settings()
-        _similarity_service = TicketSimilarityService(
-            groq_api_key=settings.groq_api_key
-        )
+        _similarity_service = TicketSimilarityService(groq_api_key=settings.groq_api_key)
     return _similarity_service
