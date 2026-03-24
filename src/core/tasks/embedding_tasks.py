@@ -146,26 +146,9 @@ async def _generate_and_store_embedding_async(ticket_id: int) -> bool:
             
             # Generate and store embedding
             embedding = await similarity_service.generate_embedding(embedding_content)
-            embedding_str = "[" + ",".join(f"{v:.8f}" for v in embedding) + "]"
-            
-            # Store embedding + solution text in ticket_embeddings
-            await session.execute(
-                text("DELETE FROM ticket_embeddings WHERE ticket_id = :ticket_id"),
-                {"ticket_id": ticket_id}
-            )
-            
-            # Store with solution_text column
-            await session.execute(
-                text("""
-                    INSERT INTO ticket_embeddings (ticket_id, embedding, solution_text)
-                    VALUES (:ticket_id, CAST(:embedding AS vector), :solution_text)
-                """),
-                {
-                    "ticket_id": ticket_id,
-                    "embedding": embedding_str,
-                    "solution_text": solution_text or None
-                }
-            )
+            from src.data.repositories.ticket_embedding_repository import TicketEmbeddingRepository
+            repo = TicketEmbeddingRepository(session)
+            await repo.upsert_embedding_with_solution(ticket_id, embedding, solution_text or None)
             
             await session.commit()
             

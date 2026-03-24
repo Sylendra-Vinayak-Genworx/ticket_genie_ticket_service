@@ -98,3 +98,78 @@ class TicketEmbeddingRepository:
             min_similarity,
         )
         return rows
+
+    async def upsert_embedding_with_solution(
+        self, ticket_id: int, embedding: list[float], solution_text: str | None = None
+    ) -> None:
+        """Create or replace the embedding and solution_text for *ticket_id*."""
+        vec_str = _vec_to_pg(embedding)
+        
+        await self.session.execute(
+            text("DELETE FROM ticket_embeddings WHERE ticket_id = :ticket_id"),
+            {"ticket_id": ticket_id}
+        )
+        
+        if solution_text is not None:
+            await self.session.execute(
+                text("""
+                    INSERT INTO ticket_embeddings (ticket_id, embedding, solution_text)
+                    VALUES (:ticket_id, CAST(:embedding AS vector), :solution_text)
+                """),
+                {
+                    "ticket_id": ticket_id,
+                    "embedding": vec_str,
+                    "solution_text": solution_text
+                }
+            )
+        else:
+            await self.session.execute(
+                text("""
+                    INSERT INTO ticket_embeddings (ticket_id, embedding)
+                    VALUES (:ticket_id, CAST(:embedding AS vector))
+                """),
+                {
+                    "ticket_id": ticket_id,
+                    "embedding": vec_str,
+                }
+            )
+
+    async def search_similar_tickets_with_metadata(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        min_similarity: float = 0.3,
+    ) -> list[Any]:
+        vec_str = _vec_to_pg(embedding)
+        
+        stmt = text("""
+            SELECT
+                t.ticket_id,
+                t.ticket_number,
+                t.title,
+                t.description,
+                t.status,
+                t.severity,
+                t.priority,
+                t.product,
+                t.created_at,
+                te.solution_text,
+                1 - (te.embedding <=> CAST(:embedding AS vector)) AS similarity
+            FROM ticket_embeddings te
+            JOIN tickets t ON t.ticket_id = te.ticket_id
+            WHERE t.status IN ('RESOLVED', 'CLOSED')
+              AND te.embedding IS NOT NULL
+              AND 1 - (te.embedding <=> CAST(:embedding AS vector)) >= :min_similarity
+            ORDER BY te.embedding <=> CAST(:embedding AS vector)
+            LIMIT :limit
+        """)
+
+        result = await self.session.execute(
+            stmt,
+            {
+                "embedding": vec_str,
+                "min_similarity": min_similarity,
+                "limit": limit,
+            }
+        )
+        return result.fetchall()

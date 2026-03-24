@@ -266,7 +266,7 @@ async def upload_comment_attachment(
         )
 
     try:
-        blob_path = gcs_upload(
+        blob_path = await gcs_upload(
             file_bytes=contents,
             filename=file.filename or "attachment",
             folder=f"comments/pending/{user_id}",
@@ -325,7 +325,7 @@ async def upload_attachment(
 
     # ── Upload to GCS then generate a signed URL ──────────────────────────────
     try:
-        blob_path = gcs_upload(
+        blob_path = await gcs_upload(
             file_bytes=contents,
             filename=file.filename or "attachment",
             folder=f"tickets/pending/{user_id}",
