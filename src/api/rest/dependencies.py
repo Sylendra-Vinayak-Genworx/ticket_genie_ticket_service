@@ -16,6 +16,7 @@ from src.core.services.analytics_service import AnalyticsService
 from src.core.services.keyword_rule_service import KeywordRuleService
 from src.core.services.sla_rule_service import SLARuleManagementService
 from src.core.services.ticket_service import TicketService
+from src.core.services.notification.unread_notfication_service import UnreadNotificationService
 
 from fastapi import Depends, HTTPException, status
 
@@ -91,3 +92,12 @@ def get_analytics_service(db: DBSession) -> AnalyticsService:
 
 
 AnalyticsServiceDep = Annotated[AnalyticsService, Depends(get_analytics_service)]
+
+# ── UnreadNotificationService factory ───────────────────────────────────────
+
+def get_unread_notification_service(db: DBSession) -> UnreadNotificationService:
+    return UnreadNotificationService(db=db)
+
+UnreadNotificationServiceDep = Annotated[
+    UnreadNotificationService, Depends(get_unread_notification_service)
+]

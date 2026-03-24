@@ -1,6 +1,7 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, logger
 from src.api.middleware.cors import setup_cors
 from src.api.middleware.error_handler import register_exception_handlers
 from src.api.middleware.logging import StructLogMiddleware
@@ -27,6 +28,12 @@ from src.api.rest.routes.similarity_routes import router as similarity_router
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    try:
+        from src.core.services.ticket_similarity_service import get_similarity_service
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, get_similarity_service)
+    except Exception:
+        pass
     yield
     await engine.dispose()
 

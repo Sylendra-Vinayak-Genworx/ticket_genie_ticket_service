@@ -1,5 +1,5 @@
 """
-src/data/repositories/ticket_assignment_repositoty.py
+src/data/repositories/ticket_assignment_repository.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Skill-based ticket assignment repository.
 """

@@ -102,3 +102,18 @@ NotificationRequest = (
     | SLABreachedRequest
     | AutoClosedRequest
 )
+
+
+# ── Unread backfill response ──────────────────────────────────────────────────
+ 
+class UnreadNotificationsResponse(BaseModel):
+    """
+    Response for GET /notifications/unread.
+    ``notifications`` is an ordered list of SSE payload dicts (newest first)
+    that the frontend dispatches directly into notificationsSlice.
+    """
+    model_config = ConfigDict(frozen=True)
+ 
+    notifications: list[dict]
+    count: int
+    since_hours: int

@@ -15,7 +15,7 @@ from src.data.clients.postgres_client import AsyncSessionFactory
 from src.data.models.postgres.ticket_event import TicketEvent
 from src.data.repositories.ticket_event_repository import TicketEventRepository
 from src.data.repositories.ticket_repository import TicketRepository
-from src.data.repositories.ticket_assignment_repositoty import TicketAssignmentRepository
+from src.data.repositories.ticket_assignment_repository import TicketAssignmentRepository
 
 logger = logging.getLogger(__name__)
 

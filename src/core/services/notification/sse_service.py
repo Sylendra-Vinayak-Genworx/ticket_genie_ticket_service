@@ -252,4 +252,5 @@ class SSENotificationService:
             event_type=event_type,
             status=NotificationStatus.SENT,
             sent_at=now,
+            payload=payload,
         ))

@@ -5,9 +5,12 @@ This repository must NOT query or mutate any other table.
 Cross-table orchestration belongs in the service layer.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.constants.enum import NotificationChannel
 from src.data.models.postgres.notification_log import NotificationLog
 
 
@@ -28,5 +31,25 @@ class NotificationLogRepository:
             select(NotificationLog)
             .where(NotificationLog.ticket_id == ticket_id)
             .order_by(NotificationLog.created_at.desc())
+        )
+        return list(result.scalars().all())
+    
+    async def get_unread_for_user(
+    self,
+    recipient_user_id: str,
+    since_hours: int = 24,
+    limit: int = 50,
+) -> list[NotificationLog]:
+        since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        result = await self.db.execute(
+            select(NotificationLog)
+            .where(
+                NotificationLog.recipient_user_id == recipient_user_id,
+                NotificationLog.channel == NotificationChannel.IN_APP,
+                NotificationLog.sent_at >= since,
+                NotificationLog.payload.is_not(None),
+            )
+            .order_by(NotificationLog.sent_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.data.clients.auth_client import AuthServiceClient, UserDTO
-from src.data.repositories.ticket_assignment_repositoty import (
+from src.data.repositories.ticket_assignment_repository import (
     AgentStats,
     TicketAssignmentRepository,
 )

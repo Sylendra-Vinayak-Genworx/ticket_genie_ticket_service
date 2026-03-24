@@ -14,6 +14,7 @@ class TicketSimilarityService:
 
     def __init__(self, groq_api_key: str = ""):
         self._embeddings = None
+        self._get_embeddings() 
 
     def _get_embeddings(self):
         if self._embeddings is None:

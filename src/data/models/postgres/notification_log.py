@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import BigInteger, DateTime, Enum as SAEnum, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +50,6 @@ class NotificationLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     # Relationships
     ticket: Mapped["Ticket"] = relationship("Ticket", back_populates="notification_logs")
