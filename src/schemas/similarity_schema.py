@@ -1,4 +1,4 @@
-from src.schemas import BaseModel
+from pydantic import BaseModel
 from typing import List, Optional
 from pydantic import Field
 # ============================================================================
