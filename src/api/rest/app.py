@@ -26,6 +26,15 @@ from src.api.rest.routes.similarity_routes import router as similarity_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    Lifespan.
+    
+    Args:
+        app (FastAPI): Input parameter.
+    
+    Returns:
+        AsyncGenerator[None, None]: The expected output.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     try:
@@ -39,6 +48,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
+    """
+    Create app.
+    
+    Returns:
+        FastAPI: The expected output.
+    """
     from src.core.services.notification.adapter import apply_notification_patch
     apply_notification_patch()
     setup_logging()

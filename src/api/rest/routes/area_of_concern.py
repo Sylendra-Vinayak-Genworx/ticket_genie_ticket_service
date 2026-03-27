@@ -19,7 +19,12 @@ def _svc(session: AsyncSession = Depends(get_db)) -> AreaOfConcernService:
     return AreaOfConcernService(session)
 
 
-@router.get("", response_model=list[AreaOfConcernResponse])
+@router.get(
+    "",
+    response_model=list[AreaOfConcernResponse],
+    summary="List areas of concern",
+    description="Return all areas of concern for ticket creation dropdowns."
+)
 async def list_areas_of_concern(
     svc: AreaOfConcernService = Depends(_svc),
 ) -> list[AreaOfConcernResponse]:

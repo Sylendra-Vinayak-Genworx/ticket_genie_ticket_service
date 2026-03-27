@@ -71,6 +71,7 @@ class NotificationStatus(str, enum.Enum):
     SENT = "SENT"
     FAILED = "FAILED"
     PENDING = "PENDING"
+    READ = "READ"
 
 
 class MatchField(str, enum.Enum):

@@ -18,6 +18,19 @@ class TicketAssignmentService(TicketBaseService):
         current_user_role: str,
         team_id: str | None = None,
     ) -> Ticket:
+        """
+        Assign ticket.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            payload (TicketAssignRequest): Input parameter.
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+            team_id (str | None): Input parameter.
+        
+        Returns:
+            Ticket: The expected output.
+        """
         ticket = await self._get_or_404(ticket_id)
         role = UserRole(current_user_role)
 

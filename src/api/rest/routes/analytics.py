@@ -58,6 +58,7 @@ def _build_filters(
     "/dashboard",
     response_model=AdminDashboard,
     summary="Admin / Lead dashboard",
+    description="Retrieve the analytics dashboard data for admin and lead users.",
 )
 async def get_dashboard(
     svc: AnalyticsServiceDep,
@@ -68,7 +69,23 @@ async def get_dashboard(
     date_to: Optional[datetime] = Query(default=None),
     product: Optional[str] = Query(default=None),
     customer_tier_id: Optional[int] = Query(default=None),
-):
+) -> AdminDashboard:
+    """
+    Get dashboard.
+    
+    Args:
+        svc (AnalyticsServiceDep): Input parameter.
+        auth (AuthClientDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+        date_from (Optional[datetime]): Input parameter.
+        date_to (Optional[datetime]): Input parameter.
+        product (Optional[str]): Input parameter.
+        customer_tier_id (Optional[int]): Input parameter.
+    
+    Returns:
+        AdminDashboard: The expected output.
+    """
     filters = _build_filters(date_from, date_to, product, customer_tier_id)
     # Team leads see only their own team's data
     assignee_ids = None
@@ -83,6 +100,7 @@ async def get_dashboard(
     "/sla-compliance",
     response_model=SLAComplianceReport,
     summary="SLA compliance report (LEAD / ADMIN)",
+    description="Retrieve the SLA compliance report for admins and leads.",
 )
 async def get_sla_compliance(
     svc: AnalyticsServiceDep,
@@ -91,7 +109,21 @@ async def get_sla_compliance(
     date_to: Optional[datetime] = Query(default=None),
     product: Optional[str] = Query(default=None),
     customer_tier_id: Optional[int] = Query(default=None),
-):
+) -> SLAComplianceReport:
+    """
+    Get sla compliance.
+    
+    Args:
+        svc (AnalyticsServiceDep): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+        date_from (Optional[datetime]): Input parameter.
+        date_to (Optional[datetime]): Input parameter.
+        product (Optional[str]): Input parameter.
+        customer_tier_id (Optional[int]): Input parameter.
+    
+    Returns:
+        SLAComplianceReport: The expected output.
+    """
     filters = _build_filters(date_from, date_to, product, customer_tier_id)
     return await svc.get_sla_compliance(filters, current_user_role=user_role)
 
@@ -101,6 +133,7 @@ async def get_sla_compliance(
     "/agents/{agent_user_id}",
     response_model=AgentPerformance,
     summary="Agent performance (self or LEAD/ADMIN)",
+    description="Retrieve the performance metrics for a specific agent.",
 )
 async def get_agent_performance(
     agent_user_id: str,
@@ -108,7 +141,20 @@ async def get_agent_performance(
     auth: AuthClientDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
-):
+) -> AgentPerformance:
+    """
+    Get agent performance.
+    
+    Args:
+        agent_user_id (str): Input parameter.
+        svc (AnalyticsServiceDep): Input parameter.
+        auth (AuthClientDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+    
+    Returns:
+        AgentPerformance: The expected output.
+    """
     return await svc.get_agent_performance(
         agent_user_id=agent_user_id,
         current_user_id=user_id,
@@ -121,6 +167,7 @@ async def get_agent_performance(
     "/customers",
     response_model=list[CustomerTicketReport],
     summary="Customer ticket reports (LEAD / ADMIN)",
+    description="Retrieve ticket reports and statistics for customers.",
 )
 async def get_customer_reports(
     svc: AnalyticsServiceDep,
@@ -129,7 +176,21 @@ async def get_customer_reports(
     date_to: Optional[datetime] = Query(default=None),
     product: Optional[str] = Query(default=None),
     customer_tier_id: Optional[int] = Query(default=None),
-):
+) -> list[CustomerTicketReport]:
+    """
+    Get customer reports.
+    
+    Args:
+        svc (AnalyticsServiceDep): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+        date_from (Optional[datetime]): Input parameter.
+        date_to (Optional[datetime]): Input parameter.
+        product (Optional[str]): Input parameter.
+        customer_tier_id (Optional[int]): Input parameter.
+    
+    Returns:
+        list[CustomerTicketReport]: The expected output.
+    """
     filters = _build_filters(date_from, date_to, product, customer_tier_id)
     return await svc.get_customer_reports(filters, current_user_role=user_role)
 
@@ -139,9 +200,20 @@ async def get_customer_reports(
     "/me",
     response_model=CustomerTicketReport,
     summary="My own ticket summary",
+    description="Retrieve a ticket summary and statistics for the current user.",
 )
 async def get_my_report(
     svc: AnalyticsServiceDep,
     user_id: CurrentUserID,
-):
+) -> CustomerTicketReport:
+    """
+    Get my report.
+    
+    Args:
+        svc (AnalyticsServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+    
+    Returns:
+        CustomerTicketReport: The expected output.
+    """
     return await svc.get_my_report(current_user_id=user_id)

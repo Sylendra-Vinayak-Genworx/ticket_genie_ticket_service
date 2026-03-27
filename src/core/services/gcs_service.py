@@ -70,6 +70,17 @@ def _object_name(area: str, filename: str) -> str:
 
 
 async def upload_attachment(file_bytes: bytes, filename: str, folder: str) -> str:
+    """
+    Upload attachment.
+    
+    Args:
+        file_bytes (bytes): Input parameter.
+        filename (str): Input parameter.
+        folder (str): Input parameter.
+    
+    Returns:
+        str: The expected output.
+    """
     s = get_settings()
     safe_name = Path(filename).name.replace(" ", "_")[:100]
     unique_name = f"{uuid.uuid4().hex}_{safe_name}"
@@ -94,6 +105,16 @@ async def upload_attachment(file_bytes: bytes, filename: str, folder: str) -> st
 
 
 async def upload_image(file: UploadFile, prefix: str = TICKET_PREFIX) -> dict:
+    """
+    Upload image.
+    
+    Args:
+        file (UploadFile): Input parameter.
+        prefix (str): Input parameter.
+    
+    Returns:
+        dict: The expected output.
+    """
     s = get_settings()
     data = await file.read()
     original_name = file.filename or "upload"
@@ -129,6 +150,15 @@ async def upload_image(file: UploadFile, prefix: str = TICKET_PREFIX) -> dict:
 
 
 async def download_attachment(blob_path: str) -> bytes:
+    """
+    Download attachment.
+    
+    Args:
+        blob_path (str): Input parameter.
+    
+    Returns:
+        bytes: The expected output.
+    """
     s = get_settings()
     token = await _get_access_token()
     url = f"https://storage.googleapis.com/storage/v1/b/{s.GCS_BUCKET_NAME}/o/{urllib.parse.quote(blob_path, safe='')}?alt=media"
@@ -151,10 +181,29 @@ def get_public_url(blob_path: str) -> str:
 
 
 def get_public_url_disabled(blob_path: str) -> str:
+    """
+    Get public url disabled.
+    
+    Args:
+        blob_path (str): Input parameter.
+    
+    Returns:
+        str: The expected output.
+    """
     return generate_signed_url(blob_path)
 
 
 def generate_signed_url(object_path: str, expiry_minutes: int = 60) -> str:
+    """
+    Generate signed url.
+    
+    Args:
+        object_path (str): Input parameter.
+        expiry_minutes (int): Input parameter.
+    
+    Returns:
+        str: The expected output.
+    """
     try:
         from google.cloud import storage
         s = get_settings()

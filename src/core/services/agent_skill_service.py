@@ -5,6 +5,12 @@ from src.schemas.agent_skill_schema import AgentSkillListResponse, AgentSkillUpd
 
 class AgentSkillService:
     def __init__(self, repo: AgentSkillRepository):
+        """
+          init  .
+        
+        Args:
+            repo (AgentSkillRepository): Input parameter.
+        """
         self.repo = repo
     """Service layer for managing agent skills. Provides methods to get and update an agent's skills, which include the skill area and proficiency level. The service interacts with the AgentSkillRepository to perform database operations and includes business logic such as validating skill area IDs during updates."""
     def _format_skills(self, skills) -> list[dict]:
@@ -18,10 +24,29 @@ class AgentSkillService:
         ]
 
     async def get_skills(self, user_id: str) -> AgentSkillListResponse:
+        """
+        Get skills.
+        
+        Args:
+            user_id (str): Input parameter.
+        
+        Returns:
+            AgentSkillListResponse: The expected output.
+        """
         skills = await self.repo.get_by_user_id(user_id)
         return AgentSkillListResponse(skills=self._format_skills(skills))
 
     async def update_skills(self, user_id: str, payload: AgentSkillUpdateRequest) -> AgentSkillListResponse:
+        """
+        Update skills.
+        
+        Args:
+            user_id (str): Input parameter.
+            payload (AgentSkillUpdateRequest): Input parameter.
+        
+        Returns:
+            AgentSkillListResponse: The expected output.
+        """
         area_ids = [skill.area_id for skill in payload.skills]
 
         if area_ids:

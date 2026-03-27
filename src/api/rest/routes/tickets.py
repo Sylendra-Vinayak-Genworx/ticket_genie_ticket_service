@@ -4,6 +4,7 @@ from src.api.rest.dependencies import (
     CurrentUserID,
     CurrentUserRole,
     TicketServiceDep,
+    AttachmentServiceDep,
 )
 from src.constants.enum import Priority, Severity, TicketStatus
 from src.schemas.common_schema import PaginatedResponse
@@ -22,13 +23,6 @@ from src.data.models.postgres.ticket_comment import TicketComment
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
-def _enqueue_auto_assign(ticket_id: int, ticket_title: str) -> None:
-    import logging
-    from src.core.tasks.assignment_task import auto_assign_ticket
-    auto_assign_ticket.delay(ticket_id=ticket_id, ticket_title=ticket_title)
-    logging.getLogger(__name__).info(
-        "auto_assign_ticket: enqueued post-commit for ticket_id=%s", ticket_id
-    )
 
 """Ticket-related endpoints: create ticket, get my tickets, get ticket detail, update status, add comment, assign ticket, upload attachments, self-escalation, etc."""
 @router.post(
@@ -36,16 +30,29 @@ def _enqueue_auto_assign(ticket_id: int, ticket_title: str) -> None:
     response_model=TicketDetailResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new ticket",
+    description="Create a newly formed ticket in the system.",
 )
 async def create_ticket(
     payload: TicketCreateRequest,
     background_tasks: BackgroundTasks,
     svc: TicketServiceDep,
     user_id: CurrentUserID,
-):
+) -> TicketDetailResponse:
+    """
+    Create ticket.
+    
+    Args:
+        payload (TicketCreateRequest): Input parameter.
+        background_tasks (BackgroundTasks): Input parameter.
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+    
+    Returns:
+        TicketDetailResponse: The expected output.
+    """
     ticket = await svc.create_ticket(payload, current_user_id=user_id)
     background_tasks.add_task(
-        _enqueue_auto_assign, ticket.ticket_id, ticket.title
+        svc.enqueue_auto_assign, ticket.ticket_id, ticket.title
     )
     return TicketDetailResponse.model_validate(ticket)
 
@@ -73,7 +80,27 @@ async def get_my_tickets(
     is_escalated: Optional[bool] = Query(default=None),
     is_unassigned: Optional[bool] = Query(default=None),
     queue_type: Optional[str] = Query(default=None),
-):
+) -> PaginatedResponse[TicketBriefResponse]:
+    """
+    Get my tickets.
+    
+    Args:
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+        page (int): Input parameter.
+        page_size (int): Input parameter.
+        status_filter (Optional[TicketStatus]): Input parameter.
+        severity (Optional[Severity]): Input parameter.
+        priority (Optional[Priority]): Input parameter.
+        is_breached (Optional[bool]): Input parameter.
+        is_escalated (Optional[bool]): Input parameter.
+        is_unassigned (Optional[bool]): Input parameter.
+        queue_type (Optional[str]): Input parameter.
+    
+    Returns:
+        PaginatedResponse[TicketBriefResponse]: The expected output.
+    """
     filters = TicketListFilters(
         page=page,
         page_size=page_size,
@@ -102,6 +129,7 @@ async def get_my_tickets(
     "",
     response_model=PaginatedResponse[TicketBriefResponse],
     summary="List all tickets — team_lead / admin only",
+    description="Retrieve a paginated list of all tickets with optional filtering.",
 )
 async def list_all_tickets(
     svc: TicketServiceDep,
@@ -120,7 +148,31 @@ async def list_all_tickets(
     team_id: Optional[str] = Query(default=None),
     queue_type: Optional[str] = Query(default=None),
     routing_status: Optional[str] = Query(default=None),
-):
+) -> PaginatedResponse[TicketBriefResponse]:
+    """
+    List all tickets.
+    
+    Args:
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+        page (int): Input parameter.
+        page_size (int): Input parameter.
+        status_filter (Optional[TicketStatus]): Input parameter.
+        severity (Optional[Severity]): Input parameter.
+        priority (Optional[Priority]): Input parameter.
+        is_breached (Optional[bool]): Input parameter.
+        is_escalated (Optional[bool]): Input parameter.
+        is_unassigned (Optional[bool]): Input parameter.
+        customer_id (Optional[str]): Input parameter.
+        assignee_id (Optional[str]): Input parameter.
+        team_id (Optional[str]): Input parameter.
+        queue_type (Optional[str]): Input parameter.
+        routing_status (Optional[str]): Input parameter.
+    
+    Returns:
+        PaginatedResponse[TicketBriefResponse]: The expected output.
+    """
     filters = TicketListFilters(
         page=page,
         page_size=page_size,
@@ -152,13 +204,26 @@ async def list_all_tickets(
     "/{ticket_id}",
     response_model=TicketDetailResponse,
     summary="Get ticket detail",
+    description="Retrieve the full details of a specific ticket.",
 )
 async def get_ticket(
     ticket_id: int,
     svc: TicketServiceDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
-):
+) -> TicketDetailResponse:
+    """
+    Get ticket.
+    
+    Args:
+        ticket_id (int): Input parameter.
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+    
+    Returns:
+        TicketDetailResponse: The expected output.
+    """
     ticket = await svc.get_ticket_detail(
         ticket_id=ticket_id,
         current_user_id=user_id,
@@ -171,6 +236,7 @@ async def get_ticket(
     "/{ticket_id}/status",
     response_model=TicketBriefResponse,
     summary="Transition ticket status",
+    description="Transition the primary status of a specific ticket.",
 )
 async def update_ticket_status(
     ticket_id: int,
@@ -178,7 +244,20 @@ async def update_ticket_status(
     svc: TicketServiceDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
-):
+) -> TicketBriefResponse:
+    """
+    Update ticket status.
+    
+    Args:
+        ticket_id (int): Input parameter.
+        payload (TicketStatusUpdateRequest): Input parameter.
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+    
+    Returns:
+        TicketBriefResponse: The expected output.
+    """
     ticket = await svc.transition_status(
         ticket_id, payload,
         current_user_id=user_id,
@@ -201,7 +280,19 @@ async def add_comment(
     payload: CommentCreateRequest,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
-):
+) -> CommentResponse:
+    """
+    Add comment.
+    
+    Args:
+        svc (TicketServiceDep): Input parameter.
+        payload (CommentCreateRequest): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+    
+    Returns:
+        CommentResponse: The expected output.
+    """
     comment = await svc.add_comment(
         payload,
         current_user_id=user_id,
@@ -214,6 +305,7 @@ async def add_comment(
     "/{ticket_id}/assign",
     response_model=TicketBriefResponse,
     summary="Assign ticket to an agent",
+    description="Manually assign a ticket to a particular support agent.",
 )
 async def assign_ticket(
     ticket_id: int,
@@ -221,7 +313,20 @@ async def assign_ticket(
     svc: TicketServiceDep,
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
-):
+) -> TicketBriefResponse:
+    """
+    Assign ticket.
+    
+    Args:
+        ticket_id (int): Input parameter.
+        payload (TicketAssignRequest): Input parameter.
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+    
+    Returns:
+        TicketBriefResponse: The expected output.
+    """
     ticket = await svc.assign_ticket(
         ticket_id, payload,
         current_user_id=user_id,
@@ -232,6 +337,7 @@ async def assign_ticket(
 """Upload a comment image/attachment to GCS. This endpoint can be used to upload files that will be attached to a comment. The file is first uploaded to GCS, and a signed URL is returned in the response. The client can then use this signed URL to attach the file to a comment when posting the comment content."""
 @router.post(
     "/comments/attachments/upload",
+    response_model=dict,
     summary="Upload a comment image/attachment to GCS",
     description=(
         "Upload an image or file to attach to a comment. "
@@ -239,114 +345,56 @@ async def assign_ticket(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_comment_attachment(
+    attachment_svc: AttachmentServiceDep,
     file: UploadFile = File(...),
     user_id: CurrentUserID = None,
-):
-    from src.core.services.gcs_service import upload_attachment as gcs_upload, generate_signed_url
-
-    _ALLOWED_TYPES = {
-        "image/jpeg", "image/png", "image/gif", "image/webp",
-        "application/pdf", "text/plain", "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    }
-    if file.content_type not in _ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=(
-                f"File type '{file.content_type}' is not allowed. "
-                f"Accepted: {sorted(_ALLOWED_TYPES)}"
-            ),
-        )
-
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File exceeds the 10 MB limit.",
-        )
-
-    try:
-        blob_path = await gcs_upload(
-            file_bytes=contents,
-            filename=file.filename or "attachment",
-            folder=f"comments/pending/{user_id}",
-        )
-        signed_url = generate_signed_url(blob_path)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GCS upload failed: {exc}",
-        )
-
-    return {
-        "file_name": file.filename,
-        "file_url":  signed_url,
-        "blob_path": blob_path,
-    }
+) -> dict:
+    """
+    Upload comment attachment.
+    
+    Args:
+        attachment_svc (AttachmentServiceDep): Input parameter.
+        file (UploadFile): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+    
+    Returns:
+        dict: The expected output.
+    """
+    return await attachment_svc.upload_comment_attachment(file, user_id)
 
 """Ticket self-escalation endpoint. Allows a user to manually escalate their ticket to the lead's team if they feel it's not being addressed in a timely manner. The user can provide an optional reason for escalation, which will be recorded in the ticket's history. The service layer will handle the escalation logic, such as changing the ticket's assigned team to the lead's team, updating the ticket status if necessary, and logging the escalation reason."""
 @router.post(
     "/attachments/upload",
+    response_model=dict,
     summary="Upload a ticket attachment to GCS",
     description=(
         "Upload a file before (or after) creating a ticket. "
- 
     ),
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_attachment(
+    attachment_svc: AttachmentServiceDep,
     file: UploadFile = File(...),
     user_id: CurrentUserID = None,
-):
-    from src.core.services.gcs_service import upload_attachment as gcs_upload, generate_signed_url
-
-    # ── Validate content-type ─────────────────────────────────────────────────
-    _ALLOWED_TYPES = {
-        "image/jpeg", "image/png", "image/gif", "image/webp",
-        "application/pdf", "text/plain", "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    }
-    if file.content_type not in _ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=(
-                f"File type '{file.content_type}' is not allowed. "
-                f"Accepted: {sorted(_ALLOWED_TYPES)}"
-            ),
-        )
-
-    # ── Read & size-check ─────────────────────────────────────────────────────
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File exceeds the 10 MB limit.",
-        )
-
-    # ── Upload to GCS then generate a signed URL ──────────────────────────────
-    try:
-        blob_path = await gcs_upload(
-            file_bytes=contents,
-            filename=file.filename or "attachment",
-            folder=f"tickets/pending/{user_id}",
-        )
-        signed_url = generate_signed_url(blob_path)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GCS upload failed: {exc}",
-        )
-
-    return {
-        "file_name": file.filename,
-        "file_url":  signed_url,  
-        "blob_path": blob_path,    
-    }
+) -> dict:
+    """
+    Upload attachment.
+    
+    Args:
+        attachment_svc (AttachmentServiceDep): Input parameter.
+        file (UploadFile): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+    
+    Returns:
+        dict: The expected output.
+    """
+    return await attachment_svc.upload_ticket_attachment(file, user_id)
 
 @router.post(
     "/{ticket_id}/escalate",
     response_model=TicketBriefResponse,
     summary="Manually escalate a ticket to the lead's team",
+    description="Escalate a ticket directly to the lead of the current group.",
 )
 async def self_escalate_ticket(
     ticket_id: int,
@@ -354,7 +402,20 @@ async def self_escalate_ticket(
     user_id: CurrentUserID,
     user_role: CurrentUserRole,
     reason: str = Query(default=None, description="Reason for manual escalation"),
-):
+) -> TicketBriefResponse:
+    """
+    Self escalate ticket.
+    
+    Args:
+        ticket_id (int): Input parameter.
+        svc (TicketServiceDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
+        user_role (CurrentUserRole): Input parameter.
+        reason (str): Input parameter.
+    
+    Returns:
+        TicketBriefResponse: The expected output.
+    """
     ticket = await svc.self_escalate(
         ticket_id=ticket_id,
         reason=reason,

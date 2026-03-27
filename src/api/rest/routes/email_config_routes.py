@@ -13,11 +13,26 @@ from src.schemas.email_config_schema import (
 router = APIRouter(prefix="/admin/email-config", tags=["Email Configuration"])
 
 """Endpoints for managing email configuration settings, such as SMTP server details, credentials, etc. Only accessible by admins."""
-@router.get("", response_model=EmailConfigResponse)
+@router.get(
+    "",
+    response_model=EmailConfigResponse,
+    summary="Get email config",
+    description="Retrieve the current email configuration settings.",
+)
 async def get_email_config(
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
-):
+) -> EmailConfigResponse:
+    """
+    Get email config.
+    
+    Args:
+        db (AsyncSession): Input parameter.
+        current_user_id (str): Input parameter.
+    
+    Returns:
+        EmailConfigResponse: The expected output.
+    """
     service = EmailConfigService(db)
     config = await service.get_config()
     
@@ -30,13 +45,29 @@ async def get_email_config(
     return config
 
 
-@router.patch("", response_model=EmailConfigResponse)
+@router.patch(
+    "",
+    response_model=EmailConfigResponse,
+    summary="Update email config",
+    description="Update the email configuration settings.",
+)
 async def update_email_config(
     request: EmailConfigUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
-):
+) -> EmailConfigResponse:
 
+    """
+    Update email config.
+    
+    Args:
+        request (EmailConfigUpdateRequest): Input parameter.
+        db (AsyncSession): Input parameter.
+        current_user_id (str): Input parameter.
+    
+    Returns:
+        EmailConfigResponse: The expected output.
+    """
     service = EmailConfigService(db)
     
     try:
@@ -49,22 +80,53 @@ async def update_email_config(
         )
 
 
-@router.post("/initialize", response_model=EmailConfigResponse)
+@router.post(
+    "/initialize",
+    response_model=EmailConfigResponse,
+    summary="Initialize email config",
+    description="Initialize the email configuration with default settings.",
+)
 async def initialize_email_config(
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
-):
+) -> EmailConfigResponse:
+    """
+    Initialize email config.
+    
+    Args:
+        db (AsyncSession): Input parameter.
+        current_user_id (str): Input parameter.
+    
+    Returns:
+        EmailConfigResponse: The expected output.
+    """
     service = EmailConfigService(db)
     config = await service.initialize_default_config()
     return config
 
 
-@router.post("/test")
+@router.post(
+    "/test",
+    response_model=dict,
+    summary="Test email config",
+    description="Test the current email configuration by sending a test email."
+)
 async def test_email_config(
     request: EmailConfigTestRequest,
     db: AsyncSession = Depends(get_db),
     current_user_id: str = Depends(require_admin),
-):
+) -> dict:
+    """
+    Test email config.
+    
+    Args:
+        request (EmailConfigTestRequest): Input parameter.
+        db (AsyncSession): Input parameter.
+        current_user_id (str): Input parameter.
+    
+    Returns:
+        dict: The expected output.
+    """
     service = EmailConfigService(db)
     config_dict = await service.get_decrypted_config()
     

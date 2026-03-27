@@ -17,11 +17,26 @@ def _generate_temp_password(length: int = 12) -> str:
 
 class EmailCustomerService:
     def __init__(self, auth_client: AuthServiceClient) -> None:
+        """
+          init  .
+        
+        Args:
+            auth_client (AuthServiceClient): Input parameter.
+        """
         self._auth = auth_client
 
     async def resolve_customer(
         self, sender_email: str
     ) -> tuple[UserDTO, bool, str | None]:
+        """
+        Resolve customer.
+        
+        Args:
+            sender_email (str): Input parameter.
+        
+        Returns:
+            tuple[UserDTO, bool, str | None]: The expected output.
+        """
         settings = get_settings()
         base = settings.auth_service_url.rstrip("/")
 
@@ -91,6 +106,18 @@ class EmailCustomerService:
         ticket_id: int,
         recipient_id: str,
     ) -> None:
+        """
+        Send credentials email.
+        
+        Args:
+            sender_email (str): Input parameter.
+            customer_name (str): Input parameter.
+            temp_password (str): Input parameter.
+            ticket_number (str): Input parameter.
+            original_message_id (str): Input parameter.
+            ticket_id (int): Input parameter.
+            recipient_id (str): Input parameter.
+        """
         settings = get_settings()
         login_url = f"{settings.FRONTEND_URL.rstrip('/')}/login"
 

@@ -165,6 +165,16 @@ class IMAPPoller:
         password: str,
         mailbox: str = "INBOX",
     ) -> None:
+        """
+          init  .
+        
+        Args:
+            host (str): Input parameter.
+            port (int): Input parameter.
+            user (str): Input parameter.
+            password (str): Input parameter.
+            mailbox (str): Input parameter.
+        """
         self._host = host
         self._port = port
         self._user = user

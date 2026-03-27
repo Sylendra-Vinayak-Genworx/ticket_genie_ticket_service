@@ -16,7 +16,12 @@ router = APIRouter(prefix="/api/tickets/similarity", tags=["similarity"])
 
 
 """Endpoint to search for similar tickets based on a query string. Returns a list of similar tickets with their similarity scores. Supports filtering by minimum similarity threshold and limiting the number of results. Only searches resolved/closed tickets to find relevant past issues."""
-@router.get("", response_model=SimilaritySearchResponse)
+@router.get(
+    "",
+    response_model=SimilaritySearchResponse,
+    summary="Search similar tickets",
+    description="Search for similar tickets based on a query string.",
+)
 async def search_similar_tickets(
     query: str = Query(
         ...,
@@ -37,7 +42,19 @@ async def search_similar_tickets(
         description="Minimum similarity threshold (0-1)"
     ),
     db: AsyncSession = Depends(get_db)
-):
+)-> SimilaritySearchResponse:
+    """
+    Search similar tickets.
+    
+    Args:
+        query (str): Input parameter.
+        limit (int): Input parameter.
+        min_similarity (float): Input parameter.
+        db (AsyncSession): Input parameter.
+    
+    Returns:
+        SimilaritySearchResponse: The expected output.
+    """
     try:
         similarity_service = get_similarity_service()
 
@@ -64,11 +81,26 @@ async def search_similar_tickets(
         )
 
 """Endpoint to generate and store an embedding for a specific ticket by ID. This can be used to backfill embeddings for existing tickets or generate embeddings for new tickets. Only generates embeddings for the ticket's title and description, and stores them in the database for later similarity searches."""
-@router.post("/generate-embedding/{ticket_id}")
+@router.post(
+    "/generate-embedding/{ticket_id}",
+    response_model=dict,
+    summary="Generate ticket embedding",
+    description="Generate and store an embedding for a specific ticket by ID.",
+)
 async def generate_ticket_embedding(
     ticket_id: int,
     db: AsyncSession = Depends(get_db)
-):
+) -> dict:
+    """
+    Generate ticket embedding.
+    
+    Args:
+        ticket_id (int): Input parameter.
+        db (AsyncSession): Input parameter.
+    
+    Returns:
+        dict: The expected output.
+    """
     try:
         from sqlalchemy import select
         from src.data.models.postgres.ticket import Ticket
@@ -112,8 +144,19 @@ async def generate_ticket_embedding(
         )
 
 
-@router.get("/health")
-async def similarity_health_check():
+@router.get(
+    "/health",
+    response_model=dict,
+    summary="Similarity health check",
+    description="Check the health status of the ticket similarity service."
+)
+async def similarity_health_check() -> dict:
+    """
+    Similarity health check.
+    
+    Returns:
+        dict: The expected output.
+    """
     try:
         similarity_service = get_similarity_service()
         test_embedding = await similarity_service.generate_embedding("test query")

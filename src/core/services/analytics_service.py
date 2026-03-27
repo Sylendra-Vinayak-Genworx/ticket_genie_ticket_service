@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 class AnalyticsService:
     def __init__(self, db: AsyncSession) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+        """
         self.db = db
         self._analytics_repo = AnalyticsRepository(db)
 
@@ -36,6 +42,18 @@ class AnalyticsService:
         assignee_ids: Optional[list[str]] = None,
         auth_client: Optional[AuthServiceClient] = None,
     ) -> AdminDashboard:
+        """
+        Get admin dashboard.
+        
+        Args:
+            filters (AnalyticsFilters): Input parameter.
+            current_user_role (str): Input parameter.
+            assignee_ids (Optional[list[str]]): Input parameter.
+            auth_client (Optional[AuthServiceClient]): Input parameter.
+        
+        Returns:
+            AdminDashboard: The expected output.
+        """
         role = UserRole(current_user_role)
         if role not in (UserRole.LEAD, UserRole.ADMIN):
             raise InsufficientPermissionsError("Only team leads and admins can view the dashboard.")
@@ -94,6 +112,17 @@ class AnalyticsService:
         current_user_role: str,
         assignee_ids: Optional[list[str]] = None,
     ) -> SLAComplianceReport:
+        """
+        Get sla compliance.
+        
+        Args:
+            filters (AnalyticsFilters): Input parameter.
+            current_user_role (str): Input parameter.
+            assignee_ids (Optional[list[str]]): Input parameter.
+        
+        Returns:
+            SLAComplianceReport: The expected output.
+        """
         role = UserRole(current_user_role)
         if role not in (UserRole.LEAD, UserRole.ADMIN):
             raise InsufficientPermissionsError("Only team leads and admins can view SLA compliance.")
@@ -116,6 +145,18 @@ class AnalyticsService:
         current_user_role: str,
         auth_client: Optional[AuthServiceClient] = None,
     ) -> AgentPerformance:
+        """
+        Get agent performance.
+        
+        Args:
+            agent_user_id (str): Input parameter.
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+            auth_client (Optional[AuthServiceClient]): Input parameter.
+        
+        Returns:
+            AgentPerformance: The expected output.
+        """
         role = UserRole(current_user_role)
         if role == UserRole.AGENT and agent_user_id != current_user_id:
             raise InsufficientPermissionsError("Agents can only view their own performance.")
@@ -151,6 +192,16 @@ class AnalyticsService:
         filters: AnalyticsFilters,
         current_user_role: str,
     ) -> list[CustomerTicketReport]:
+        """
+        Get customer reports.
+        
+        Args:
+            filters (AnalyticsFilters): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            list[CustomerTicketReport]: The expected output.
+        """
         role = UserRole(current_user_role)
         if role not in (UserRole.LEAD, UserRole.ADMIN):
             raise InsufficientPermissionsError("Only team leads and admins can view customer reports.")
@@ -165,5 +216,14 @@ class AnalyticsService:
         self,
         current_user_id: str,
     ) -> CustomerTicketReport:
+        """
+        Get my report.
+        
+        Args:
+            current_user_id (str): Input parameter.
+        
+        Returns:
+            CustomerTicketReport: The expected output.
+        """
         data = await self._analytics_repo.get_my_summary(current_user_id)
         return CustomerTicketReport(**data)

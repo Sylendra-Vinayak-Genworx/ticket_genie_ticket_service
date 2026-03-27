@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.constants.enum import NotificationChannel
+from src.constants.enum import NotificationChannel, NotificationStatus
 from src.data.models.postgres.notification_log import NotificationLog
 
 
@@ -33,6 +33,34 @@ class NotificationLogRepository:
             .order_by(NotificationLog.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def mark_as_read(self, notification_id: int) -> bool:
+        """Mark a single notification as READ."""
+        result = await self.db.execute(
+            select(NotificationLog).where(NotificationLog.notification_id == notification_id)
+        )
+        log = result.scalar_one_or_none()
+        if log:
+            log.status = NotificationStatus.READ
+            await self.db.flush()
+            return True
+        return False
+
+    async def mark_all_as_read(self, recipient_user_id: str) -> int:
+        """Mark all IN_APP notifications for a user as READ. Returns count updated."""
+        # Using a select then update approach to stay within repo patterns or bulk update
+        from sqlalchemy import update
+        result = await self.db.execute(
+            update(NotificationLog)
+            .where(
+                NotificationLog.recipient_user_id == recipient_user_id,
+                NotificationLog.channel == NotificationChannel.IN_APP,
+                NotificationLog.status != NotificationStatus.READ,
+            )
+            .values(status=NotificationStatus.READ)
+        )
+        await self.db.flush()
+        return result.rowcount
     
     async def get_unread_for_user(
     self,
@@ -47,6 +75,7 @@ class NotificationLogRepository:
                 NotificationLog.recipient_user_id == recipient_user_id,
                 NotificationLog.channel == NotificationChannel.IN_APP,
                 NotificationLog.sent_at >= since,
+                NotificationLog.status != NotificationStatus.READ,
                 NotificationLog.payload.is_not(None),
             )
             .order_by(NotificationLog.sent_at.desc())

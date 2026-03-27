@@ -37,6 +37,13 @@ _TICKET_NUM_RE = re.compile(r"\[TKT-(\d+)\]", re.IGNORECASE)
 class EmailIngestService:
 
     def __init__(self, db: AsyncSession, auth_client: AuthServiceClient) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+            auth_client (AuthServiceClient): Input parameter.
+        """
         self._db = db
         self._auth = auth_client
         self._thread_repo = EmailThreadRepository(db)
@@ -52,6 +59,15 @@ class EmailIngestService:
         self._parser_svc = EmailParserService()
 
     async def process(self, payload: EmailPayload) -> tuple[int, str] | None:
+        """
+        Process.
+        
+        Args:
+            payload (EmailPayload): Input parameter.
+        
+        Returns:
+            tuple[int, str] | None: The expected output.
+        """
         now = datetime.now(timezone.utc)
 
         if payload.is_auto_reply:

@@ -3,6 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 def setup_cors(app: FastAPI)-> None:
+    """
+    Setup cors.
+    
+    Args:
+        app (FastAPI): Input parameter.
+    """
     app.add_middleware(
     CORSMiddleware,
      allow_origins=[

@@ -13,6 +13,14 @@ class TicketCommentService(TicketBaseService):
         current_user_id: str,
         current_user_role: str,
     ):
+        """
+        Add comment.
+        
+        Args:
+            comment (CommentCreateRequest): Input parameter.
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+        """
         now = datetime.now(timezone.utc)
 
         saved = await self._comment_repo.add(TicketComment(

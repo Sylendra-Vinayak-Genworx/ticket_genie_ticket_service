@@ -23,6 +23,12 @@ class EmailConfigService:
     """
 
     def __init__(self, db: AsyncSession) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+        """
         self._db = db
         self._repo = EmailConfigRepository(db)
 

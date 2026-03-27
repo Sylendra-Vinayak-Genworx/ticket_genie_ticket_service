@@ -22,6 +22,12 @@ _WRITE_ROLES = {UserRole.LEAD, UserRole.ADMIN}
 
 class KeywordRuleService:
     def __init__(self, db: AsyncSession) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+        """
         self.db = db
         self._repo = KeywordRepository(db)
 
@@ -45,6 +51,15 @@ class KeywordRuleService:
     async def list_rules(
         self, filters: KeywordRuleListFilters
     ) -> tuple[int, list[KeywordRule]]:
+        """
+        List rules.
+        
+        Args:
+            filters (KeywordRuleListFilters): Input parameter.
+        
+        Returns:
+            tuple[int, list[KeywordRule]]: The expected output.
+        """
         return await self._repo.list_all(
             is_active=filters.is_active,
             target_severity=filters.target_severity,
@@ -54,6 +69,15 @@ class KeywordRuleService:
         )
 
     async def get_rule(self, rule_id: int) -> KeywordRule:
+        """
+        Get rule.
+        
+        Args:
+            rule_id (int): Input parameter.
+        
+        Returns:
+            KeywordRule: The expected output.
+        """
         return await self._get_or_404(rule_id)
 
     async def create_rule(
@@ -61,6 +85,16 @@ class KeywordRuleService:
         payload: KeywordRuleCreateRequest,
         current_user_role: str,
     ) -> KeywordRule:
+        """
+        Create rule.
+        
+        Args:
+            payload (KeywordRuleCreateRequest): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            KeywordRule: The expected output.
+        """
         self._check_write_access(current_user_role)
         rule = KeywordRule(
             keyword=payload.keyword,
@@ -79,6 +113,17 @@ class KeywordRuleService:
         payload: KeywordRuleUpdateRequest,
         current_user_role: str,
     ) -> KeywordRule:
+        """
+        Update rule.
+        
+        Args:
+            rule_id (int): Input parameter.
+            payload (KeywordRuleUpdateRequest): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            KeywordRule: The expected output.
+        """
         self._check_write_access(current_user_role)
         rule = await self._get_or_404(rule_id)
         for field, value in payload.model_dump(exclude_unset=True).items():
@@ -93,6 +138,13 @@ class KeywordRuleService:
         rule_id: int,
         current_user_role: str,
     ) -> None:
+        """
+        Delete rule.
+        
+        Args:
+            rule_id (int): Input parameter.
+            current_user_role (str): Input parameter.
+        """
         self._check_write_access(current_user_role)
         rule = await self._get_or_404(rule_id)
         await self._repo.delete(rule)

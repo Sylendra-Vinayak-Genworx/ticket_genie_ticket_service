@@ -52,6 +52,13 @@ class AutoAssignmentService:
         session: AsyncSession,
         auth_client: AuthServiceClient,
     ) -> None:
+        """
+          init  .
+        
+        Args:
+            session (AsyncSession): Input parameter.
+            auth_client (AuthServiceClient): Input parameter.
+        """
         self._session = session
         self._repo = TicketAssignmentRepository(session)
         self._ticket_svc = TicketService(session, auth_client)

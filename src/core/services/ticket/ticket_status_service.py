@@ -19,6 +19,18 @@ class TicketStatusService(TicketBaseService):
         current_user_id: str,
         current_user_role: str,
     ) -> Ticket:
+        """
+        Transition status.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            payload (TicketStatusUpdateRequest): Input parameter.
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            Ticket: The expected output.
+        """
         ticket = await self._get_or_404(ticket_id)
         now = datetime.now(timezone.utc)
         old_status = ticket.status
@@ -110,6 +122,19 @@ class TicketStatusService(TicketBaseService):
         lead_id: str | None = None,
         lead_team_id: str | None = None,
     ) -> Ticket:
+        """
+        Escalate.
+        
+        Args:
+            ticket (Ticket): Input parameter.
+            reason (str): Input parameter.
+            now (datetime): Input parameter.
+            lead_id (str | None): Input parameter.
+            lead_team_id (str | None): Input parameter.
+        
+        Returns:
+            Ticket: The expected output.
+        """
         await self._event_repo.add(TicketEvent(
             ticket_id=ticket.ticket_id,
             triggered_by_user_id=None,
@@ -197,6 +222,18 @@ class TicketStatusService(TicketBaseService):
         current_user_id: str,
         current_user_role: str,
     ) -> Ticket:
+        """
+        Self escalate.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            reason (str): Input parameter.
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            Ticket: The expected output.
+        """
         from src.core.services.notification.manager import notification_manager
         
         role = UserRole(current_user_role)

@@ -23,6 +23,13 @@ class SLAConfig:
 
 class SLAService:
     def __init__(self, sla_repo: SLARepository, sla_rule_repo: SLARuleRepository) -> None:
+        """
+          init  .
+        
+        Args:
+            sla_repo (SLARepository): Input parameter.
+            sla_rule_repo (SLARuleRepository): Input parameter.
+        """
         self._repo = sla_repo
         self._rule_repo = sla_rule_repo
 

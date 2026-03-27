@@ -17,9 +17,8 @@ Key design decisions
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import text, Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.data.models.postgres.ticket_embedding import TicketEmbedding
@@ -64,7 +63,7 @@ class TicketEmbeddingRepository:
         embedding: list[float],
         limit: int = 20,
         min_similarity: float = 0.60,
-    ) -> list[Any]:
+    ) -> list[Row]:
        
         vec_str = _vec_to_pg(embedding)
 
@@ -139,7 +138,7 @@ class TicketEmbeddingRepository:
         embedding: list[float],
         limit: int = 5,
         min_similarity: float = 0.3,
-    ) -> list[Any]:
+    ) -> list[Row]:
         vec_str = _vec_to_pg(embedding)
         
         stmt = text("""

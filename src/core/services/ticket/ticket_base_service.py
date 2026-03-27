@@ -35,6 +35,13 @@ SYSTEM = "SYSTEM"
 
 
 def fire_notification(request, auth_client: "AuthServiceClient") -> None:
+    """
+    Fire notification.
+    
+    Args:
+        request (Any): Input parameter.
+        auth_client ('AuthServiceClient'): Input parameter.
+    """
     async def _run():
         async with AsyncSessionLocal() as db:
             try:
@@ -55,6 +62,13 @@ def fire_notification(request, auth_client: "AuthServiceClient") -> None:
 
 class TicketBaseService:
     def __init__(self, db: AsyncSession, auth_client: AuthServiceClient) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+            auth_client (AuthServiceClient): Input parameter.
+        """
         self.db = db
         self._auth = auth_client
         self._ticket_repo = TicketRepository(db)

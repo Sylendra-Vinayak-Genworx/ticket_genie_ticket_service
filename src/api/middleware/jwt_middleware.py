@@ -29,6 +29,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
 
+        """
+        Dispatch.
+        
+        Args:
+            request (Request): Input parameter.
+            call_next (Callable): Input parameter.
+        
+        Returns:
+            Response: The expected output.
+        """
         if request.method == "OPTIONS":
             return await call_next(request)
 

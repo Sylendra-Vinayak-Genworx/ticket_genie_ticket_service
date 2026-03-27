@@ -6,8 +6,13 @@ from src.schemas.tier_schema import CustomerTierResponse
 
 router = APIRouter(prefix="/tiers", tags=["tiers"])
 
-@router.get("", response_model=list[CustomerTierResponse])
-async def list_tiers(db: AsyncSession = Depends(get_db)):
+@router.get(
+    "",
+    response_model=list[CustomerTierResponse],
+    summary="List tiers",
+    description="List all available customer tiers.",
+)
+async def list_tiers(db: AsyncSession = Depends(get_db))-> list[CustomerTierResponse]:
     """List all available customer tiers."""
     repo = CustomerTierRepository(db)
     return await repo.list_all()

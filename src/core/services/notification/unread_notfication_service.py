@@ -1,8 +1,10 @@
 from __future__ import annotations
+from src.constants.enum import NotificationStatus
  
 import logging
- 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.data.models.postgres.notification_log import NotificationLog
  
 from src.data.repositories.notification_log_repository import NotificationLogRepository
  
@@ -20,6 +22,12 @@ class UnreadNotificationService:
     """
  
     def __init__(self, db: AsyncSession) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+        """
         self._repo = NotificationLogRepository(db)
  
     async def get_unread(
@@ -42,10 +50,33 @@ class UnreadNotificationService:
         payloads = []
         for log in logs:
             if log.payload:
-                payloads.append(log.payload)
+                p = dict(log.payload)
+                # Ensure the ID is present in the backfilled payload
+                p["notification_id"] = log.notification_id
+                payloads.append(p)
  
         logger.debug(
             "unread_service: user=%s returning %d notifications (since_hours=%d)",
             recipient_user_id, len(payloads), since_hours,
         )
         return payloads
+
+    async def mark_as_read(self, user_id: str, notification_id: int) -> bool:
+        """Mark a single notification as read, if it belongs to the user."""
+        result = await self._repo.db.execute(
+            select(NotificationLog).where(
+                NotificationLog.notification_id == notification_id,
+                NotificationLog.recipient_user_id == user_id
+            )
+        )
+        log = result.scalar_one_or_none()
+        if not log:
+            return False
+        
+        log.status = NotificationStatus.READ
+        await self._repo.db.flush()
+        return True
+
+    async def mark_all_as_read(self, user_id: str) -> int:
+        """Mark all unread IN_APP notifications for user as read."""
+        return await self._repo.mark_all_as_read(user_id)

@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 class TicketSimilarityService:
 
     def __init__(self, groq_api_key: str = ""):
+        """
+          init  .
+        
+        Args:
+            groq_api_key (str): Input parameter.
+        """
         self._embeddings = None
         self._get_embeddings() 
 
@@ -32,6 +38,15 @@ class TicketSimilarityService:
         return self._embeddings
 
     async def generate_embedding(self, content: str) -> List[float]:
+        """
+        Generate embedding.
+        
+        Args:
+            content (str): Input parameter.
+        
+        Returns:
+            List[float]: The expected output.
+        """
         try:
             embeddings = self._get_embeddings()
             import asyncio
@@ -51,6 +66,19 @@ class TicketSimilarityService:
         min_similarity: float = 0.3,
         status_filter: Optional[List[str]] = None
     ) -> List[dict]:
+        """
+        Find similar tickets.
+        
+        Args:
+            query_text (str): Input parameter.
+            session (AsyncSession): Input parameter.
+            top_k (int): Input parameter.
+            min_similarity (float): Input parameter.
+            status_filter (Optional[List[str]]): Input parameter.
+        
+        Returns:
+            List[dict]: The expected output.
+        """
         if status_filter is None:
             status_filter = ["RESOLVED", "CLOSED"]
 
@@ -102,6 +130,17 @@ class TicketSimilarityService:
         content: str,
         session: AsyncSession
     ) -> bool:
+        """
+        Generate and store embedding.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            content (str): Input parameter.
+            session (AsyncSession): Input parameter.
+        
+        Returns:
+            bool: The expected output.
+        """
         try:
             logger.info(f"[STORE EMBEDDING] Starting for ticket_id={ticket_id}, content_length={len(content)}")
             
@@ -124,6 +163,12 @@ _similarity_service: Optional[TicketSimilarityService] = None
 
 
 def get_similarity_service() -> TicketSimilarityService:
+    """
+    Get similarity service.
+    
+    Returns:
+        TicketSimilarityService: The expected output.
+    """
     global _similarity_service
     if _similarity_service is None:
         from src.config.settings import get_settings

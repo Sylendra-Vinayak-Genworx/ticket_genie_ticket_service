@@ -1,6 +1,15 @@
 class EmailParserService:
     @staticmethod
     def strip_reply_quotes(body: str) -> str:
+        """
+        Strip reply quotes.
+        
+        Args:
+            body (str): Input parameter.
+        
+        Returns:
+            str: The expected output.
+        """
         if not body:
             return body
         lines = body.splitlines()

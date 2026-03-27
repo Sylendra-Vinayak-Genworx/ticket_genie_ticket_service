@@ -32,6 +32,12 @@ class ClassificationResult:
 
 class ClassificationService:
     def __init__(self, keyword_repo: KeywordRepository) -> None:
+        """
+          init  .
+        
+        Args:
+            keyword_repo (KeywordRepository): Input parameter.
+        """
         self._repo = keyword_repo          
 
     async def classify(self, title: str, description: str) -> ClassificationResult:

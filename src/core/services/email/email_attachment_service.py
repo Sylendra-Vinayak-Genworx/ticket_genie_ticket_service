@@ -10,6 +10,16 @@ class EmailAttachmentService:
         payload: EmailPayload,
         folder: str,
     ) -> list[str]:
+        """
+        Upload email attachments.
+        
+        Args:
+            payload (EmailPayload): Input parameter.
+            folder (str): Input parameter.
+        
+        Returns:
+            list[str]: The expected output.
+        """
         blob_paths: list[str] = []
         for att in (payload.attachments or []):
             try:

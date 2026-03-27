@@ -11,6 +11,17 @@ class TicketQueryService(TicketBaseService):
         current_user_role: str,
         filters: TicketListFilters,
     ) -> tuple[int, list[Ticket]]:
+        """
+        Get my tickets.
+        
+        Args:
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+            filters (TicketListFilters): Input parameter.
+        
+        Returns:
+            tuple[int, list[Ticket]]: The expected output.
+        """
         role = UserRole(current_user_role)
         if role == UserRole.CUSTOMER:
             filters.customer_id = current_user_id
@@ -24,6 +35,17 @@ class TicketQueryService(TicketBaseService):
         current_user_id: str,
         current_user_role: str,
     ) -> Ticket:
+        """
+        Get ticket detail.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            current_user_id (str): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            Ticket: The expected output.
+        """
         ticket = await self._ticket_repo.get_by_id(ticket_id, eager=True)
         if not ticket:
             from src.core.exceptions.base import TicketNotFoundError
@@ -37,6 +59,16 @@ class TicketQueryService(TicketBaseService):
         filters: TicketListFilters,
         current_user_role: str,
     ) -> tuple[int, list[Ticket]]:
+        """
+        Get all tickets.
+        
+        Args:
+            filters (TicketListFilters): Input parameter.
+            current_user_role (str): Input parameter.
+        
+        Returns:
+            tuple[int, list[Ticket]]: The expected output.
+        """
         role = UserRole(current_user_role)
         if role not in (UserRole.LEAD, UserRole.ADMIN):
             raise InsufficientPermissionsError("Only team leads and admins can view all tickets.")

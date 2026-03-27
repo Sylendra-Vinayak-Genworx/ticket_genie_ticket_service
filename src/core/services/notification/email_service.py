@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
 class EmailNotificationService:
 
     def __init__(self, db: AsyncSession) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+        """
         self._db = db
         self._repo = NotificationLogRepository(db)
         self._thread_repo = EmailThreadRepository(db)
@@ -101,6 +107,13 @@ class EmailNotificationService:
     async def send_ticket_created(
         self, req: TicketCreatedRequest, recipient_email: str
     ) -> None:
+        """
+        Send ticket created.
+        
+        Args:
+            req (TicketCreatedRequest): Input parameter.
+            recipient_email (str): Input parameter.
+        """
         config = await self._ensure_config()
         subject, text, html = _draft_ticket_created(
             req.ticket_number, req.ticket_title,
@@ -116,6 +129,14 @@ class EmailNotificationService:
     async def send_status_changed(
         self, req: StatusChangedRequest, recipient_email: str, customer_name: str
     ) -> None:
+        """
+        Send status changed.
+        
+        Args:
+            req (StatusChangedRequest): Input parameter.
+            recipient_email (str): Input parameter.
+            customer_name (str): Input parameter.
+        """
         config = await self._ensure_config()
         subject, text, html = _draft_status_changed(
             req.ticket_number, req.ticket_title,
@@ -133,6 +154,14 @@ class EmailNotificationService:
     async def send_agent_comment(
         self, req: AgentCommentRequest, recipient_email: str, customer_name: str
     ) -> None:
+        """
+        Send agent comment.
+        
+        Args:
+            req (AgentCommentRequest): Input parameter.
+            recipient_email (str): Input parameter.
+            customer_name (str): Input parameter.
+        """
         config = await self._ensure_config()
         subject, text, html = _draft_agent_comment(
             req.ticket_number, req.ticket_title,
@@ -149,6 +178,13 @@ class EmailNotificationService:
     async def send_customer_comment(
         self, req: CustomerCommentRequest, recipient_email: str
     ) -> None:
+        """
+        Send customer comment.
+        
+        Args:
+            req (CustomerCommentRequest): Input parameter.
+            recipient_email (str): Input parameter.
+        """
         config = await self._ensure_config()
         subject, text, html = _draft_customer_comment(
             req.ticket_number, req.ticket_title, req.customer_name,
@@ -225,6 +261,14 @@ class EmailNotificationService:
     async def send_auto_closed(
         self, req: AutoClosedRequest, recipient_email: str, customer_name: str
     ) -> None:
+        """
+        Send auto closed.
+        
+        Args:
+            req (AutoClosedRequest): Input parameter.
+            recipient_email (str): Input parameter.
+            customer_name (str): Input parameter.
+        """
         config = await self._ensure_config()
         subject, text, html = _draft_auto_closed(
             req.ticket_number, req.ticket_title,
@@ -249,6 +293,17 @@ class EmailNotificationService:
         ticket_number: str,
         original_message_id: str,
     ) -> None:
+        """
+        Send ticket ack.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            recipient_id (str): Input parameter.
+            recipient_email (str): Input parameter.
+            customer_name (str): Input parameter.
+            ticket_number (str): Input parameter.
+            original_message_id (str): Input parameter.
+        """
         config = await self._ensure_config()
         from_name = config.get("smtp_from_name", "Support Team")
         html_body = _ACK_HTML.format(
@@ -289,6 +344,18 @@ class EmailNotificationService:
         ticket_number: str,
         original_message_id: str,
     ) -> None:
+        """
+        Send continue in ui.
+        
+        Args:
+            ticket_id (int): Input parameter.
+            recipient_id (str): Input parameter.
+            recipient_email (str): Input parameter.
+            customer_name (str): Input parameter.
+            customer_role (str): Input parameter.
+            ticket_number (str): Input parameter.
+            original_message_id (str): Input parameter.
+        """
         from src.utils.portal_token import generate_portal_token
 
         config = await self._ensure_config()
@@ -336,6 +403,16 @@ class EmailNotificationService:
         original_subject: str,
         missing_fields: list[str],
     ) -> None:
+        """
+        Send clarification request.
+        
+        Args:
+            recipient_email (str): Input parameter.
+            customer_name (str): Input parameter.
+            original_message_id (str): Input parameter.
+            original_subject (str): Input parameter.
+            missing_fields (list[str]): Input parameter.
+        """
         config = await self._ensure_config()
         from_name = config.get("smtp_from_name", "Support Team")
 

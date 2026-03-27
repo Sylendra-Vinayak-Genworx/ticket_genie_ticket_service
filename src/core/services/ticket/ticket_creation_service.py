@@ -17,6 +17,16 @@ class TicketCreationService(TicketBaseService):
         payload: TicketCreateRequest,
         current_user_id: str,
     ) -> Ticket:
+        """
+        Create ticket.
+        
+        Args:
+            payload (TicketCreateRequest): Input parameter.
+            current_user_id (str): Input parameter.
+        
+        Returns:
+            Ticket: The expected output.
+        """
         now = datetime.now(timezone.utc)
         customer: UserDTO = await self._auth.get_user(current_user_id)
         classification = await self._classifier.classify(payload.title, payload.description)
@@ -85,6 +95,8 @@ class TicketCreationService(TicketBaseService):
             changed_by=SYSTEM,
             reason="Automatic acknowledgement on creation",
         )
+
+        await self.db.commit()
 
         fire_notification(
             request=TicketCreatedRequest(

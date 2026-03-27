@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +32,9 @@ class SSEBus:
     """
 
     def __init__(self) -> None:
+        """
+          init  .
+        """
         self._queues: dict[str, list[asyncio.Queue]] = {}
         self._redis = None
         self._listener_task = None
@@ -76,6 +78,15 @@ class SSEBus:
             logger.info("sse_bus: Redis pub/sub listener stopped and task reset")
 
     async def subscribe(self, user_id: str) -> asyncio.Queue:
+        """
+        Subscribe.
+        
+        Args:
+            user_id (str): Input parameter.
+        
+        Returns:
+            asyncio.Queue: The expected output.
+        """
         if self._listener_task is None or self._listener_task.done():
             logger.info("sse_bus: creating redis listener task")
             self._listener_task = asyncio.create_task(self._listen_redis())
@@ -86,6 +97,13 @@ class SSEBus:
         return q
 
     def unsubscribe(self, user_id: str, queue: asyncio.Queue) -> None:
+        """
+        Unsubscribe.
+        
+        Args:
+            user_id (str): Input parameter.
+            queue (asyncio.Queue): Input parameter.
+        """
         queues = self._queues.get(user_id, [])
         if queue in queues:
             queues.remove(queue)
@@ -114,6 +132,15 @@ class SSEBus:
                 logger.warning("sse_bus: queue full for user_id=%s — event dropped", user_id)
 
     def is_connected(self, user_id: str) -> bool:
+        """
+        Is connected.
+        
+        Args:
+            user_id (str): Input parameter.
+        
+        Returns:
+            bool: The expected output.
+        """
         return bool(self._queues.get(user_id))
 
 
@@ -127,9 +154,21 @@ class SSENotificationService:
     """
 
     def __init__(self, db: AsyncSession) -> None:
+        """
+          init  .
+        
+        Args:
+            db (AsyncSession): Input parameter.
+        """
         self._repo = NotificationLogRepository(db)
 
     async def send_ticket_created(self, req: TicketCreatedRequest) -> None:
+        """
+        Send ticket created.
+        
+        Args:
+            req (TicketCreatedRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.customer_id,
             ticket_id=req.ticket_id,
@@ -143,6 +182,12 @@ class SSENotificationService:
         )
 
     async def send_status_changed(self, req: StatusChangedRequest) -> None:
+        """
+        Send status changed.
+        
+        Args:
+            req (StatusChangedRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.customer_id,
             ticket_id=req.ticket_id,
@@ -158,6 +203,12 @@ class SSENotificationService:
         )
 
     async def send_customer_comment(self, req: CustomerCommentRequest) -> None:
+        """
+        Send customer comment.
+        
+        Args:
+            req (CustomerCommentRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.assignee_id,
             ticket_id=req.ticket_id,
@@ -172,6 +223,12 @@ class SSENotificationService:
         )
 
     async def send_agent_comment(self, req: AgentCommentRequest) -> None:
+        """
+        Send agent comment.
+        
+        Args:
+            req (AgentCommentRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.customer_id,
             ticket_id=req.ticket_id,
@@ -186,6 +243,12 @@ class SSENotificationService:
         )
 
     async def send_ticket_assigned(self, req: TicketAssignedRequest) -> None:
+        """
+        Send ticket assigned.
+        
+        Args:
+            req (TicketAssignedRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.assignee_id,
             ticket_id=req.ticket_id,
@@ -200,6 +263,12 @@ class SSENotificationService:
         )
 
     async def send_sla_breached(self, req: SLABreachedRequest) -> None:
+        """
+        Send sla breached.
+        
+        Args:
+            req (SLABreachedRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.lead_id,
             ticket_id=req.ticket_id,
@@ -218,6 +287,12 @@ class SSENotificationService:
         )
 
     async def send_auto_closed(self, req: AutoClosedRequest) -> None:
+        """
+        Send auto closed.
+        
+        Args:
+            req (AutoClosedRequest): Input parameter.
+        """
         await self._push(
             recipient_id=req.customer_id,
             ticket_id=req.ticket_id,
@@ -239,13 +314,14 @@ class SSENotificationService:
         event_type: str,
         payload: dict,
     ) -> None:
+        """
+        Pushes a notification to the user and logs it to the database.
+        """
         now = datetime.now(timezone.utc)
         payload["timestamp"] = now.isoformat()
 
-        await sse_bus.push(recipient_id, payload)
-
-        
-        await self._repo.add(NotificationLog(
+        # 1. Create log entry to get the DB-generated notification_id (NotificationLog)
+        log = NotificationLog(
             ticket_id=ticket_id,
             recipient_user_id=recipient_id,
             channel=NotificationChannel.IN_APP,
@@ -253,4 +329,15 @@ class SSENotificationService:
             status=NotificationStatus.SENT,
             sent_at=now,
             payload=payload,
-        ))
+        )
+        await self._repo.add(log)
+        # 1.1 Flush so we have the ID from the database
+        await self._repo.db.flush()
+
+        # 2. Inject the ID into the payload and push to SSE bus
+        payload["notification_id"] = log.notification_id
+        await sse_bus.push(recipient_id, payload)
+
+        # 3. Update the log entry's stored payload to include the ID
+        log.payload = payload
+        # No explicit flush needed here as it's tracked by the session

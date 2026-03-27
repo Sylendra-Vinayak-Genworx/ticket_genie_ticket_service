@@ -19,6 +19,16 @@ class StructLogMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """
+        Dispatch.
+        
+        Args:
+            request (Request): Input parameter.
+            call_next (Callable): Input parameter.
+        
+        Returns:
+            Response: The expected output.
+        """
         request_id = str(uuid.uuid4())
         start = time.perf_counter()
 
