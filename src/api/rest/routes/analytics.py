@@ -104,6 +104,8 @@ async def get_dashboard(
 )
 async def get_sla_compliance(
     svc: AnalyticsServiceDep,
+    auth: AuthClientDep,
+    user_id: CurrentUserID,
     user_role: CurrentUserRole,
     date_from: Optional[datetime] = Query(default=None),
     date_to: Optional[datetime] = Query(default=None),
@@ -112,20 +114,26 @@ async def get_sla_compliance(
 ) -> SLAComplianceReport:
     """
     Get sla compliance.
-    
+
     Args:
         svc (AnalyticsServiceDep): Input parameter.
+        auth (AuthClientDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
         user_role (CurrentUserRole): Input parameter.
         date_from (Optional[datetime]): Input parameter.
         date_to (Optional[datetime]): Input parameter.
         product (Optional[str]): Input parameter.
         customer_tier_id (Optional[int]): Input parameter.
-    
+
     Returns:
         SLAComplianceReport: The expected output.
     """
     filters = _build_filters(date_from, date_to, product, customer_tier_id)
-    return await svc.get_sla_compliance(filters, current_user_role=user_role)
+    # Team leads see only their own team's SLA data
+    assignee_ids = None
+    if user_role == "team_lead":
+        assignee_ids = await _resolve_team_member_ids(user_id, auth)
+    return await svc.get_sla_compliance(filters, current_user_role=user_role, assignee_ids=assignee_ids)
 
 
 """Agent performance report (ticket resolution times, customer satisfaction, etc.) for the agent themselves, or for their team if the requester is a lead."""
@@ -171,6 +179,8 @@ async def get_agent_performance(
 )
 async def get_customer_reports(
     svc: AnalyticsServiceDep,
+    auth: AuthClientDep,
+    user_id: CurrentUserID,
     user_role: CurrentUserRole,
     date_from: Optional[datetime] = Query(default=None),
     date_to: Optional[datetime] = Query(default=None),
@@ -179,20 +189,26 @@ async def get_customer_reports(
 ) -> list[CustomerTicketReport]:
     """
     Get customer reports.
-    
+
     Args:
         svc (AnalyticsServiceDep): Input parameter.
+        auth (AuthClientDep): Input parameter.
+        user_id (CurrentUserID): Input parameter.
         user_role (CurrentUserRole): Input parameter.
         date_from (Optional[datetime]): Input parameter.
         date_to (Optional[datetime]): Input parameter.
         product (Optional[str]): Input parameter.
         customer_tier_id (Optional[int]): Input parameter.
-    
+
     Returns:
         list[CustomerTicketReport]: The expected output.
     """
     filters = _build_filters(date_from, date_to, product, customer_tier_id)
-    return await svc.get_customer_reports(filters, current_user_role=user_role)
+    # Team leads see only their own team's customer reports
+    assignee_ids = None
+    if user_role == "team_lead":
+        assignee_ids = await _resolve_team_member_ids(user_id, auth)
+    return await svc.get_customer_reports(filters, current_user_role=user_role, assignee_ids=assignee_ids)
 
 
 """My tickets" report for customers, showing their own tickets and stats about them."""

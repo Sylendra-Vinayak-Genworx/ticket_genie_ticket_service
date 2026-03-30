@@ -113,9 +113,9 @@ async def get_my_tickets(
         queue_type=queue_type,
     )
     total, tickets = await svc.get_my_tickets(
-        current_user_id=user_id,
-        current_user_role=user_role,
         filters=filters,
+        current_user_role=user_role,
+        current_user_id=user_id,
     )
     return PaginatedResponse(
         total=total,
@@ -191,6 +191,7 @@ async def list_all_tickets(
     total, tickets = await svc.get_all_tickets(
         filters=filters,
         current_user_role=user_role,
+        current_user_id=user_id,
     )
     return PaginatedResponse(
         total=total,
@@ -198,6 +199,40 @@ async def list_all_tickets(
         page_size=page_size,
         items=[TicketBriefResponse.model_validate(t) for t in tickets],
     )
+
+@router.get(
+    "/kpis/team",
+    response_model=dict,
+    summary="Get Key Performance Indicators for a team",
+    description="Returns global team counts (Active, Breached, Unclaimed, Resolved) unaffected by pagination or local table filters.",
+)
+async def get_team_kpis(
+    svc: TicketServiceDep,
+    user_id: CurrentUserID,
+    user_role: CurrentUserRole,
+    customer_id: Optional[str] = Query(default=None),
+    assignee_id: Optional[str] = Query(default=None),
+    team_id: Optional[str] = Query(default=None),
+) -> dict[str, int]:
+    """
+    Retrieves KPI totals for the given list filters without returning the tickets.
+    """
+    from src.schemas.ticket_schema import TicketTeamKpisResponse
+    
+    filters = TicketListFilters(
+        customer_id=customer_id,
+        assignee_id=assignee_id,
+        team_id=team_id,
+        # Default limits, although they don't affect the aggregation queries
+        page=1,
+        page_size=20, 
+    )
+    kpis_dict = await svc.get_team_kpis(
+        filters=filters,
+        current_user_role=user_role,
+        current_user_id=user_id,
+    )
+    return TicketTeamKpisResponse(**kpis_dict).model_dump()
 
 """Get ticket details by ID. The response includes all ticket fields plus the comment history. Access is role-aware: customers can only access their own tickets, agents can only access tickets assigned to them, leads/admins can access all tickets."""
 @router.get(

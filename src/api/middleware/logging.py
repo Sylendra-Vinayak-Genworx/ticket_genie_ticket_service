@@ -45,9 +45,10 @@ class StructLogMiddleware(BaseHTTPMiddleware):
         # handlers can forward it in response headers if desired.
         request.state.request_id = request_id
 
+        response: Response
         status_code = 500
         try:
-            response: Response = await call_next(request)
+            response = await call_next(request)
             status_code = response.status_code
         except Exception:
             logger.exception("unhandled_exception")

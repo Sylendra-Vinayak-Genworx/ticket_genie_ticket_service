@@ -16,6 +16,8 @@ from src.data.repositories.ticket_attachment_repository import TicketAttachmentR
 from src.data.repositories.ticket_comment_repository import TicketCommentRepository
 from src.data.repositories.ticket_event_repository import TicketEventRepository
 from src.data.repositories.ticket_repository import TicketRepository
+from src.data.repositories.priority_rule_repository import PriorityRuleRepository
+from src.data.repositories.customer_tier_repository import CustomerTierRepository
 from src.core.services.classification_service import ClassificationService
 from src.core.services.sla_service import SLAService
 
@@ -77,8 +79,14 @@ class TicketBaseService:
         self._sla_repo = SLARepository(db)
         self._sla_rule_repo = SLARuleRepository(db)
         self._keyword_repo = KeywordRepository(db)
+        self._priority_rule_repo = PriorityRuleRepository(db)
+        self._customer_tier_repo = CustomerTierRepository(db)
         self._comment_repo = TicketCommentRepository(db)
-        self._classifier = ClassificationService(self._keyword_repo)
+        self._classifier = ClassificationService(
+            self._keyword_repo,
+            priority_rule_repo=self._priority_rule_repo,
+            customer_tier_repo=self._customer_tier_repo,
+        )
         self._sla_svc = SLAService(self._sla_repo, self._sla_rule_repo)
 
     async def _get_or_404(self, ticket_id: int) -> Ticket:

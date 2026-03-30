@@ -29,9 +29,14 @@ class TicketCreationService(TicketBaseService):
         """
         now = datetime.now(timezone.utc)
         customer: UserDTO = await self._auth.get_user(current_user_id)
-        classification = await self._classifier.classify(payload.title, payload.description)
+        classification = await self._classifier.classify(
+            payload.title,
+            payload.description,
+            customer_tier_id=customer.customer_tier_id,
+        )
         severity: Severity = classification.severity
         priority: Priority = classification.priority
+
 
         sla_config = await self._sla_svc.resolve_config(
             customer_tier_id=customer.customer_tier_id,

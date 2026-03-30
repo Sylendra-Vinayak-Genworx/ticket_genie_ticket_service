@@ -15,6 +15,7 @@ from src.schemas.analytics_schema import (
     AnalyticsFilters,
     CustomerTicketReport,
     SLAComplianceReport,
+    TeamComparison,
     TicketDistribution,
     TicketSummary,
 )
@@ -97,11 +98,59 @@ class AnalyticsService:
                 avg_resolution_minutes=row["avg_resolution_minutes"],
             ))
 
+        # ── Determine data scope ──────────────────────────────────────────
+        role = UserRole(current_user_role)
+        data_scope = "GLOBAL" if role == UserRole.ADMIN else "TEAM"
+
+        # ── ADMIN-only: cross-team comparison ─────────────────────────────
+        team_comparison: list[TeamComparison] = []
+        if role == UserRole.ADMIN and auth_client:
+            try:
+                raw_rows = await self._analytics_repo.get_team_comparison(
+                    date_from=filters.date_from,
+                    date_to=filters.date_to,
+                )
+                all_users = await auth_client.get_all_users()
+                # Build assignee_id → lead_id → team_name mapping
+                lead_map: dict[str, str] = {}
+                lead_names: dict[str, str] = {}
+                for u in all_users:
+                    if u.lead_id:
+                        lead_map[u.id] = u.lead_id
+                    if u.role == "team_lead":
+                        lead_names[u.id] = u.full_name or u.email.split("@")[0]
+
+                # Bucket per-assignee rows into per-team aggregates
+                team_buckets: dict[str, dict] = {}
+                for row in raw_rows:
+                    aid = row["assignee_id"]
+                    lead_id = lead_map.get(aid, "unassigned")
+                    tname = lead_names.get(lead_id, f"Team {lead_id[:6]}…")
+                    if tname not in team_buckets:
+                        team_buckets[tname] = {"total": 0, "resolved": 0, "breached": 0}
+                    team_buckets[tname]["total"] += row["total"]
+                    team_buckets[tname]["resolved"] += row["resolved"]
+                    team_buckets[tname]["breached"] += row["breached"]
+
+                team_comparison = [
+                    TeamComparison(
+                        team_name=name,
+                        total_tickets=vals["total"],
+                        resolved_tickets=vals["resolved"],
+                        breached_tickets=vals["breached"],
+                    )
+                    for name, vals in team_buckets.items()
+                ]
+            except Exception:
+                logger.warning("Failed to build team comparison data", exc_info=True)
+
         return AdminDashboard(
+            data_scope=data_scope,
             summary=TicketSummary(**summary_data),
             distribution=TicketDistribution(**dist_data),
             sla_compliance=SLAComplianceReport(**sla_data),
             top_agents=top_agents,
+            team_comparison=team_comparison,
         )
 
     # ── SLA Compliance report ─────────────────────────────────────────────────
@@ -191,14 +240,16 @@ class AnalyticsService:
         self,
         filters: AnalyticsFilters,
         current_user_role: str,
+        assignee_ids: Optional[list[str]] = None,
     ) -> list[CustomerTicketReport]:
         """
         Get customer reports.
-        
+
         Args:
             filters (AnalyticsFilters): Input parameter.
             current_user_role (str): Input parameter.
-        
+            assignee_ids (Optional[list[str]]): Team member IDs for team-scoped queries.
+
         Returns:
             list[CustomerTicketReport]: The expected output.
         """
@@ -209,6 +260,7 @@ class AnalyticsService:
         rows = await self._analytics_repo.get_customer_reports(
             date_from=filters.date_from,
             date_to=filters.date_to,
+            assignee_ids=assignee_ids,
         )
         return [CustomerTicketReport(**r) for r in rows]
 

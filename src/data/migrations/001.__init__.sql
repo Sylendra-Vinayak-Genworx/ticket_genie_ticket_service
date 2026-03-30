@@ -364,4 +364,32 @@ ALTER TABLE IF EXISTS public.tickets
     ON UPDATE NO ACTION
     ON DELETE SET NULL;
 
+-- ── Priority Rules ───────────────────────────────────────────────────────────
+-- Maps (severity × tier_name) → priority.  Reuses existing DB enum types.
+CREATE TABLE IF NOT EXISTS public.priority_rules
+(
+    rule_id serial NOT NULL,
+    severity severity_enum NOT NULL,
+    tier_name character varying(50) COLLATE pg_catalog."default" NOT NULL,
+    priority priority_enum NOT NULL,
+    CONSTRAINT priority_rules_pkey PRIMARY KEY (rule_id),
+    CONSTRAINT uq_priority_severity_tier UNIQUE (severity, tier_name)
+);
+
+-- Seed: mirrors static _SEVERITY_TO_PRIORITY fallback per tier.
+INSERT INTO public.priority_rules (severity, tier_name, priority) VALUES
+    ('CRITICAL', 'FREE',       'P1'),
+    ('CRITICAL', 'STANDARD',   'P0'),
+    ('CRITICAL', 'ENTERPRISE', 'P0'),
+    ('HIGH',     'FREE',       'P2'),
+    ('HIGH',     'STANDARD',   'P1'),
+    ('HIGH',     'ENTERPRISE', 'P1'),
+    ('MEDIUM',   'FREE',       'P3'),
+    ('MEDIUM',   'STANDARD',   'P2'),
+    ('MEDIUM',   'ENTERPRISE', 'P2'),
+    ('LOW',      'FREE',       'P3'),
+    ('LOW',      'STANDARD',   'P3'),
+    ('LOW',      'ENTERPRISE', 'P3')
+ON CONFLICT DO NOTHING;
+
 END;

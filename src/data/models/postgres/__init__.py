@@ -16,6 +16,7 @@ from src.data.models.postgres.area_of_concern import AreaOfConcern         # noq
 from src.data.models.postgres.agent_skill import AgentSkill                 # noqa: F401
 from src.data.models.postgres.product import Product                        # noqa: F401
 from src.data.models.postgres.business_hours import BusinessHours           # noqa: F401
+from src.data.models.postgres.priority_rule import PriorityRule             # noqa: F401
 __all__ = [
     "Base",
     "AgentSkill",
@@ -35,5 +36,6 @@ __all__ = [
     "EmailThread",
     "EmailDirection",
     "Product",
-    "BusinessHours"
+    "BusinessHours",
+    "PriorityRule",
 ]

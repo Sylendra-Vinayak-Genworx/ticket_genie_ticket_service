@@ -87,20 +87,20 @@ class TicketService:
         return await self.assignment_svc.assign_ticket(ticket_id, payload, current_user_id, current_user_role, team_id)
 
     async def get_my_tickets(
-        self, current_user_id: str, current_user_role: str, filters: TicketListFilters
+        self, filters: TicketListFilters, current_user_role: str, current_user_id: str
     ) -> tuple[int, list[Ticket]]:
         """
         Get my tickets.
         
         Args:
-            current_user_id (str): Input parameter.
-            current_user_role (str): Input parameter.
             filters (TicketListFilters): Input parameter.
+            current_user_role (str): Input parameter.
+            current_user_id (str): Input parameter.
         
         Returns:
             tuple[int, list[Ticket]]: The expected output.
         """
-        return await self.query_svc.get_my_tickets(current_user_id, current_user_role, filters)
+        return await self.query_svc.get_my_tickets(filters, current_user_role, current_user_id)
 
     async def get_ticket_detail(
         self, ticket_id: int, current_user_id: str, current_user_role: str
@@ -138,7 +138,7 @@ class TicketService:
         return await self.status_svc.escalate(ticket, reason, now, lead_id, lead_team_id)
 
     async def get_all_tickets(
-        self, filters: TicketListFilters, current_user_role: str
+        self, filters: TicketListFilters, current_user_role: str, current_user_id: str
     ) -> tuple[int, list[Ticket]]:
         """
         Get all tickets.
@@ -146,11 +146,21 @@ class TicketService:
         Args:
             filters (TicketListFilters): Input parameter.
             current_user_role (str): Input parameter.
+            current_user_id (str): Input parameter.
         
         Returns:
             tuple[int, list[Ticket]]: The expected output.
         """
-        return await self.query_svc.get_all_tickets(filters, current_user_role)
+        return await self.query_svc.get_all_tickets(filters, current_user_role, current_user_id)
+
+    async def get_team_kpis(
+        self, filters: TicketListFilters, current_user_role: str, current_user_id: str
+    ) -> dict[str, int]:
+        """
+        Calculates Key Performance Indicators (KPIs) (active, breached, unclaimed, resolved) 
+        given a basic set of team/assignee filters.
+        """
+        return await self.query_svc.get_team_kpis(filters, current_user_role, current_user_id)
 
     async def add_comment(
         self, comment: CommentCreateRequest, current_user_id: str, current_user_role: str

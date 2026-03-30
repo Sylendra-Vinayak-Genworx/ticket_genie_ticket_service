@@ -18,6 +18,7 @@ from src.core.services.keyword_rule_service import KeywordRuleService
 from src.core.services.sla_rule_service import SLARuleManagementService
 from src.core.services.ticket_service import TicketService
 from src.core.services.notification.unread_notfication_service import UnreadNotificationService
+from src.core.services.priority_rule_service import PriorityRuleService
 
 from fastapi import Depends, HTTPException, status
 
@@ -177,3 +178,21 @@ def get_unread_notification_service(db: DBSession) -> UnreadNotificationService:
 UnreadNotificationServiceDep = Annotated[
     UnreadNotificationService, Depends(get_unread_notification_service)
 ]
+
+
+# ── PriorityRuleService factory ──────────────────────────────────────────────
+
+def get_priority_rule_service(db: DBSession) -> PriorityRuleService:
+    """
+    Get priority rule service.
+
+    Args:
+        db (DBSession): Input parameter.
+
+    Returns:
+        PriorityRuleService: The expected output.
+    """
+    return PriorityRuleService(db=db)
+
+
+PriorityRuleServiceDep = Annotated[PriorityRuleService, Depends(get_priority_rule_service)]

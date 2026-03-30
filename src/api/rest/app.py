@@ -22,6 +22,7 @@ import src.data.models.postgres
 from src.api.rest.routes.email_config_routes import router as email_config_router
 from src.api.rest.routes.product_routes import router as product_router
 from src.api.rest.routes.similarity_routes import router as similarity_router
+from src.api.rest.routes.priority_rules import router as priority_rules_router
 
 
 @asynccontextmanager
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(email_config_router)
     app.include_router(product_router)
     app.include_router(similarity_router)
+    app.include_router(priority_rules_router)
 
     app.add_middleware(JWTMiddleware)
     app.add_middleware(StructLogMiddleware)
