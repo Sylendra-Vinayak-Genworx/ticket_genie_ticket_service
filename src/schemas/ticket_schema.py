@@ -333,3 +333,13 @@ class TicketTimelineResponse(BaseModel):
             changed_at=event.created_at,
             reason=event.reason,
         )
+
+
+class TicketTeamKpisResponse(BaseModel):
+    """
+    Response model for the /tickets/team/kpis endpoint to display team ticket stats.
+    """
+    active_tickets: int = 0
+    breached_tickets: int = 0
+    unclaimed_tickets: int = 0
+    resolved_tickets: int = 0

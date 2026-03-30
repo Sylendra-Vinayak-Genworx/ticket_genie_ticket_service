@@ -184,17 +184,20 @@ class AnalyticsRepository:
             ))).label("res_met"),
             func.count(case((Ticket.resolution_sla_breached_at.isnot(None), 1))).label("res_breached"),
         )
-        stmt = self._apply_date_filters(stmt, date_from, date_to, product, customer_tier_id)
+        stmt = self._apply_date_filters(stmt, date_from, date_to, product, customer_tier_id, assignee_ids)
         row = (await self.db.execute(stmt)).one()
-        total = row.total or 1  # avoid division by zero
+        
+        resp_total = (row.resp_met + row.resp_breached) or 1
+        res_total = (row.res_met + row.res_breached) or 1
+
         return {
             "total_tickets": row.total,
             "response_sla_met": row.resp_met,
             "response_sla_breached": row.resp_breached,
             "resolution_sla_met": row.res_met,
             "resolution_sla_breached": row.res_breached,
-            "response_compliance_pct": round(row.resp_met / total * 100, 2),
-            "resolution_compliance_pct": round(row.res_met / total * 100, 2),
+            "response_compliance_pct": round(row.resp_met / resp_total * 100, 2) if (row.resp_met + row.resp_breached) > 0 else 100.0,
+            "resolution_compliance_pct": round(row.res_met / res_total * 100, 2) if (row.res_met + row.res_breached) > 0 else 100.0,
         }
 
     # ── customer report ───────────────────────────────────────────────────────
@@ -203,6 +206,7 @@ class AnalyticsRepository:
         self,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
+        assignee_ids: Optional[list] = None,
     ) -> list[dict]:
         stmt = (
             select(
@@ -227,6 +231,8 @@ class AnalyticsRepository:
             stmt = stmt.where(Ticket.created_at >= date_from)
         if date_to:
             stmt = stmt.where(Ticket.created_at <= date_to)
+        if assignee_ids:
+            stmt = stmt.where(Ticket.assignee_id.in_(assignee_ids))
         rows = (await self.db.execute(stmt)).all()
         return [
             {
@@ -291,3 +297,40 @@ class AnalyticsRepository:
             "total_breached": row.total_breached,
             "avg_resolution_minutes": round(row.avg_resolution_minutes, 2) if row.avg_resolution_minutes else None,
         }
+
+    # ── team comparison (ADMIN only) ──────────────────────────────────────────
+
+    async def get_team_comparison(
+        self,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+    ) -> list[dict]:
+        """Per-assignee aggregates without team filtering (ADMIN cross-team view)."""
+        stmt = (
+            select(
+                Ticket.assignee_id,
+                func.count(Ticket.ticket_id).label("total"),
+                func.count(case((
+                    Ticket.status.in_([TicketStatus.RESOLVED, TicketStatus.CLOSED]), 1
+                ))).label("resolved"),
+                func.count(case((
+                    Ticket.response_sla_breached_at.isnot(None), 1
+                ))).label("breached"),
+            )
+            .where(Ticket.assignee_id.isnot(None))
+            .group_by(Ticket.assignee_id)
+        )
+        if date_from:
+            stmt = stmt.where(Ticket.created_at >= date_from)
+        if date_to:
+            stmt = stmt.where(Ticket.created_at <= date_to)
+        rows = (await self.db.execute(stmt)).all()
+        return [
+            {
+                "assignee_id": r.assignee_id,
+                "total": r.total,
+                "resolved": r.resolved,
+                "breached": r.breached,
+            }
+            for r in rows
+        ]

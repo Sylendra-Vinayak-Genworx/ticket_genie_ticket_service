@@ -427,3 +427,43 @@ class TicketRepository:
             counts.setdefault(lead_id, 0)
 
         return counts
+    
+    async def get_team_kpis(self, filters: TicketListFilters) -> dict[str, int]:
+        """
+        Calculates KPIs for a given set of filters (usually scoped to a team/assignees).
+        This ignores QuickFilters (is_unassigned, status, etc) to ensure the 
+        global team stats remain stable even if the table below is filtered.
+        """
+        # We need 4 separate counts
+        active_cond = Ticket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD, TicketStatus.ACKNOWLEDGED])
+        unclaimed_cond = (Ticket.status == TicketStatus.ACKNOWLEDGED) & Ticket.assignee_id.is_(None)
+        resolved_cond = Ticket.status.in_([TicketStatus.RESOLVED, TicketStatus.CLOSED])
+        breached_cond = (Ticket.resolution_sla_breached_at.isnot(None)) | (Ticket.response_sla_breached_at.isnot(None))
+
+        # Execute a single aggregated query!
+        stmt = select(
+            func.count().filter(active_cond).label('active_cnt'),
+            func.count().filter(breached_cond).label('breached_cnt'),
+            func.count().filter(unclaimed_cond).label('unclaimed_cnt'),
+            func.count().filter(resolved_cond).label('resolved_cnt'),
+        )
+        
+        # We manually apply only the base filters that represent the 'Team' view
+        if filters.team_id:
+            stmt = stmt.where(Ticket.team_id == filters.team_id)
+        if filters.customer_id:
+            stmt = stmt.where(Ticket.customer_id == filters.customer_id)
+        if filters.assignee_id:
+            stmt = stmt.where(Ticket.assignee_id == filters.assignee_id)
+        if filters.assignee_ids:
+            stmt = stmt.where(Ticket.assignee_id.in_(filters.assignee_ids))
+
+        result = await self.db.execute(stmt)
+        row = result.fetchone()
+
+        return {
+            "active_tickets": row.active_cnt if row else 0,
+            "breached_tickets": row.breached_cnt if row else 0,
+            "unclaimed_tickets": row.unclaimed_cnt if row else 0,
+            "resolved_tickets": row.resolved_cnt if row else 0,
+        }

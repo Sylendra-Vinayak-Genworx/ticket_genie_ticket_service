@@ -67,3 +67,13 @@ class NotFoundError(TicketingGenieBaseException):
 class ConflictError(TicketingGenieBaseException):
     status_code = HTTPStatus.CONFLICT
     detail = "Resource already exists."
+
+
+class PriorityRuleNotFoundError(TicketingGenieBaseException):
+    status_code = HTTPStatus.NOT_FOUND
+    detail = "Priority rule not found."
+
+
+class PriorityRuleConflictError(TicketingGenieBaseException):
+    status_code = HTTPStatus.CONFLICT
+    detail = "A priority rule for this severity and tier already exists."

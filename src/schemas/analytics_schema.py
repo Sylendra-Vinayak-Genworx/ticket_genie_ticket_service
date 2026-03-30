@@ -61,12 +61,26 @@ class CustomerTicketReport(BaseModel):
     breached_tickets: int = 0
 
 
+# ── Team comparison (ADMIN only) ─────────────────────────────────────────
+class TeamComparison(BaseModel):
+    """Per-team aggregate used in cross-team comparison (ADMIN only)."""
+    team_name: str
+    total_tickets: int = 0
+    resolved_tickets: int = 0
+    breached_tickets: int = 0
+
+
 # ── Combined dashboard ───────────────────────────────────────────────────────
 class AdminDashboard(BaseModel):
+    data_scope: str = Field(
+        default="GLOBAL",
+        description="Data visibility scope: GLOBAL (admin) or TEAM (lead).",
+    )
     summary: TicketSummary
     distribution: TicketDistribution
     sla_compliance: SLAComplianceReport
     top_agents: list[AgentPerformance] = Field(default_factory=list)
+    team_comparison: list[TeamComparison] = Field(default_factory=list)
 
 
 # ── Filters ───────────────────────────────────────────────────────────────────
